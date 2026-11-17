@@ -14,7 +14,9 @@ window.__ModuleLoader__.load({
     ]
     const defaults = { host: '', port: 22, username: '', knownHostFingerprint: '',
       claudePath: 'claude', claudeModel: 'sonnet', reasoningEffort: 'default', customModels: '',
-      passwordRef: DEFAULT_REF, privateKeyPath: '', agent: '' }
+      passwordRef: DEFAULT_REF, privateKeyPath: '', agent: '',
+      activityPanel: true, showThinking: true, pauseHint: '', stopHint: '',
+      pauseTimeoutMs: 8000, activityPollMs: 1500, cancelBehavior: 'stop' }
     const EFFORTS = ['default', 'low', 'medium', 'high', 'xhigh', 'max']
     const EFFORT_LABELS = { default: '默认（交给远端）', low: '低 low', medium: '中 medium', high: '高 high', xhigh: '极高 xhigh', max: '最大 max' }
     const inputStyle = { width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1px solid var(--color-border, #ccc)', borderRadius: 6, color: 'inherit', background: 'transparent' }
@@ -53,6 +55,122 @@ window.__ModuleLoader__.load({
         return value
       }
       return { read: (sessionId) => request('GET', sessionId), refresh: () => request('POST', undefined, 'refresh') }
+    }
+
+    function createActivityApi(fetcher = fetch) {
+      async function request(method, body, sessionId) {
+        const query = new URLSearchParams()
+        if (sessionId) query.set('sessionId', sessionId)
+        const suffix = query.toString() ? `?${query}` : ''
+        const response = await fetcher('/api/remote-claude/activity' + suffix, {
+          method, credentials: 'same-origin', redirect: 'error', cache: 'no-store',
+          ...(body ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}),
+        })
+        const value = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          const error = new Error(value.code || 'ActivityUnavailable')
+          error.code = value.code
+          throw error
+        }
+        return value
+      }
+      return {
+        read: (sessionId) => request('GET', undefined, sessionId),
+        pause: (sessionId) => request('POST', { sessionId, action: 'pause' }),
+        stop: (sessionId) => request('POST', { sessionId, action: 'stop' }),
+      }
+    }
+
+    function durationText(ms) {
+      if (typeof ms !== 'number' || ms < 0) return ''
+      const total = Math.round(ms / 1000)
+      if (total < 60) return `${total}s`
+      const minutes = Math.floor(total / 60)
+      if (minutes < 60) return `${minutes}m ${String(total % 60).padStart(2, '0')}s`
+      return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
+    }
+
+    function clockText(iso) {
+      if (!iso) return ''
+      const time = new Date(iso)
+      return Number.isNaN(time.getTime()) ? '' : time.toLocaleTimeString('zh-CN', { hour12: false })
+    }
+
+    const STATE_COLORS = {
+      idle: '#8a8a8a', preparing: '#2f6fd0', thinking: '#7a4fd6', streaming: '#2f8f4e',
+      tool: '#c07a00', waiting: '#c05a00', pausing: '#c08600', paused: '#2f6fd0',
+      stopped: '#8a8a8a', error: '#d33d3d',
+    }
+
+    function ActivityStrip(props) {
+      const sessionId = props.sessionId
+      const [data, setData] = useState(null)
+      const [expanded, setExpanded] = useState(false)
+      const [busy, setBusy] = useState(false)
+      const [note, setNote] = useState('')
+      useEffect(() => {
+        if (!sessionId) return undefined
+        let mounted = true
+        let timer
+        const tick = async () => {
+          try {
+            const snapshot = await createActivityApi().read(sessionId)
+            if (mounted) { setData(snapshot); setNote('') }
+          } catch (error) {
+            if (mounted && error?.code === 'SESSION_UNAVAILABLE') setData({ available: false })
+          }
+          if (mounted) timer = setTimeout(tick, document.visibilityState === 'hidden' ? 6000 : 1500)
+        }
+        void tick()
+        return () => { mounted = false; clearTimeout(timer) }
+      }, [sessionId])
+      if (!data?.available || !data.activity) return null
+      const activity = data.activity
+      const color = STATE_COLORS[activity.state] || '#8a8a8a'
+      const cost = typeof data.usage?.costUsd === 'number' ? data.usage.costUsd : activity.turn?.costUsd
+      const paused = activity.state === 'paused' || activity.state === 'stopped'
+      async function control(action) {
+        if (busy) return
+        setBusy(true)
+        setNote('')
+        try {
+          const snapshot = await createActivityApi()[action](sessionId)
+          setData(snapshot)
+        } catch (error) {
+          setNote(error?.code === 'NOT_RUNNING' ? '远端没有正在进行的回合。' : '操作失败，请稍后重试。')
+        } finally { setBusy(false) }
+      }
+      const entries = expanded && Array.isArray(activity.entries) ? activity.entries.slice(-6).reverse() : []
+      return h('div', { style: { display: 'grid', gap: 6, padding: '6px 2px', fontSize: 12, borderTop: '1px solid var(--color-border, #e4e4e4)' } },
+        h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' } },
+          h('span', { style: { width: 8, height: 8, borderRadius: 4, background: color, flex: '0 0 auto' } }),
+          h('span', { style: { fontWeight: 600 } }, activity.stateLabel || activity.state),
+          activity.model ? h('span', { style: { opacity: 0.75 } }, activity.model) : null,
+          activity.effort && activity.effort !== 'default' ? h('span', { style: { opacity: 0.75 } }, `思考 ${activity.effort}`) : null,
+          activity.elapsedMs ? h('span', { style: { opacity: 0.75 } }, `已用 ${durationText(activity.elapsedMs)}`) : null,
+          typeof activity.silentMs === 'number' && activity.silentMs > 3000 ? h('span', { style: { opacity: 0.75 } }, `静默 ${durationText(activity.silentMs)}`) : null,
+          activity.tool ? h('span', { style: { opacity: 0.75 } }, `工具 ${activity.tool}`) : null,
+          data.usage ? h('span', { style: { opacity: 0.75 } }, `${data.usage.inputTokens}↑ ${data.usage.outputTokens}↓`) : null,
+          typeof cost === 'number' && cost > 0 ? h('span', { style: { opacity: 0.75 } }, `$${cost.toFixed(4)}`) : null,
+          h('span', { style: { flex: 1 } }),
+          busy || paused
+            ? null
+            : h('button', { type: 'button', onClick: () => control('pause'), style: { cursor: 'pointer', padding: '2px 10px', borderRadius: 12, border: '1px solid var(--color-border, #ccc)', background: 'transparent', color: 'inherit' } }, '暂停'),
+          h('button', { type: 'button', onClick: () => setExpanded(value => !value), style: { cursor: 'pointer', padding: '2px 8px', borderRadius: 12, border: '1px solid var(--color-border, #ccc)', background: 'transparent', color: 'inherit' } }, expanded ? '收起' : '详情'),
+          expanded
+            ? h('button', { type: 'button', onClick: () => control('stop'), style: { cursor: 'pointer', padding: '2px 10px', borderRadius: 12, border: '1px solid var(--color-border, #ccc)', background: 'transparent', color: 'inherit' } }, '停止')
+            : null),
+        paused ? h('p', { style: { margin: 0, opacity: 0.78 } }, activity.state === 'stopped'
+          ? '远端进程已回收；发送任意消息会从 DSH 历史重建会话。'
+          : '已暂停：发送任意消息即可继续，远端上下文仍保留。') : null,
+        note ? h('p', { role: 'status', style: { margin: 0, color: '#c05a00' } }, note) : null,
+        entries.length
+          ? h('div', { style: { display: 'grid', gap: 2, opacity: 0.82 } }, entries.map(entry =>
+              h('div', { key: entry.id, style: { display: 'flex', gap: 8, alignItems: 'baseline' } },
+                h('span', { style: { opacity: 0.6, fontVariantNumeric: 'tabular-nums' } }, clockText(entry.at)),
+                h('span', null, entry.label),
+                entry.count > 1 ? h('span', { style: { opacity: 0.6 } }, `×${entry.count}`) : null)))
+          : null)
     }
 
     function runtimeFailure(error) {
@@ -193,6 +311,13 @@ window.__ModuleLoader__.load({
             claudeModel,
             reasoningEffort: effortEnabled ? effortValue : 'default',
             customModels: custom.join(' '),
+            activityPanel: Boolean(config.activityPanel),
+            showThinking: Boolean(config.showThinking),
+            pauseHint: String(config.pauseHint ?? '').trim(),
+            stopHint: String(config.stopHint ?? '').trim(),
+            pauseTimeoutMs: Number(config.pauseTimeoutMs) || 8000,
+            activityPollMs: Number(config.activityPollMs) || 1500,
+            cancelBehavior: String(config.cancelBehavior) === 'pause' ? 'pause' : 'stop',
           })
           const row = await createConnectionApi().save(patch, password, revision)
           setPassword('')
@@ -260,6 +385,36 @@ window.__ModuleLoader__.load({
             h('span', { style: hintStyle }, '刷新使用已保存的连接配置；只发只读控制请求，不发送用户消息。')),
           runtimeMessage ? h('p', { role: 'status', style: { margin: 0, overflowWrap: 'anywhere' } }, runtimeMessage) : null),
 
+        h('div', { style: cardStyle },
+          h('strong', null, '活动面板与暂停'),
+          h('label', { style: { display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 } },
+            h('input', { type: 'checkbox', checked: Boolean(config.activityPanel), disabled: busy || !ready,
+              onChange: (event) => update('activityPanel', event.target.checked) }),
+            '在输入框下方显示远端活动面板（状态、耗时、活动流、暂停/停止）'),
+          h('label', { style: { display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 } },
+            h('input', { type: 'checkbox', checked: Boolean(config.showThinking), disabled: busy || !ready,
+              onChange: (event) => update('showThinking', event.target.checked) }),
+            '把远端思考过程一起流式显示'),
+          h('label', { style: { display: 'grid', gap: 4 } }, 'DSH 侧取消一次回复',
+            h('select', { 'aria-label': '取消行为', value: String(config.cancelBehavior || 'stop'), disabled: busy || !ready, style: inputStyle,
+              onChange: (event) => update('cancelBehavior', event.target.value) },
+              h('option', { value: 'stop' }, '停止 stop（回收远端进程）'),
+              h('option', { value: 'pause' }, '暂停 pause（发送 interrupt 后回收，下次重放历史）'))),
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 } },
+            h('label', { style: { display: 'grid', gap: 4 } }, '暂停确认超时（毫秒）',
+              h('input', { 'aria-label': '暂停超时', type: 'number', min: 500, max: 60000, value: config.pauseTimeoutMs ?? 8000, disabled: busy || !ready, style: inputStyle,
+                onChange: (event) => update('pauseTimeoutMs', event.target.value) })),
+            h('label', { style: { display: 'grid', gap: 4 } }, '面板轮询间隔（毫秒）',
+              h('input', { 'aria-label': '轮询间隔', type: 'number', min: 500, max: 60000, value: config.activityPollMs ?? 1500, disabled: busy || !ready, style: inputStyle,
+                onChange: (event) => update('activityPollMs', event.target.value) }))),
+          h('label', { style: { display: 'grid', gap: 4 } }, '暂停提示（留空用默认文案）',
+            h('input', { 'aria-label': '暂停提示', value: config.pauseHint ?? '', disabled: busy || !ready, autoComplete: 'off', style: inputStyle,
+              onChange: (event) => update('pauseHint', event.target.value) })),
+          h('label', { style: { display: 'grid', gap: 4 } }, '停止提示（留空用默认文案）',
+            h('input', { 'aria-label': '停止提示', value: config.stopHint ?? '', disabled: busy || !ready, autoComplete: 'off', style: inputStyle,
+              onChange: (event) => update('stopHint', event.target.value) })),
+          h('p', { style: hintStyle }, '面板轮询与暂停/停止都只走本机 HTTP 和 interrupt 控制帧，不发送用户消息，不消耗额度。')),
+
         ...connectionFields.slice(5).map(([key, label, type]) => h('label', { key, style: { display: 'grid', gap: 4 } }, label,
           h('input', { 'aria-label': label, type: type || 'text', value: config[key] ?? '', disabled: busy || !ready,
             autoComplete: 'off', style: inputStyle,
@@ -275,11 +430,16 @@ window.__ModuleLoader__.load({
     return {
       createConnectionApi,
       createRuntimeApi,
+      createActivityApi,
       inject: ['slots'],
       apply(ctx) {
         ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register(
           { name: 'plugins.bundle.config', key: '@local/dsh-remote-claude' },
           (props) => h(ConnectionForm, { ...props, ctx })))
+        // Ambient status strip below the composer: local polling, zero remote cost.
+        ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register(
+          { name: 'conversation.composer.dock', id: 'remote-claude-activity', order: 5 },
+          (props) => h(ActivityStrip, { ...props })))
       },
     }
   },

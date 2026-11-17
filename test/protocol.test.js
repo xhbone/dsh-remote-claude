@@ -33,7 +33,29 @@ test('normalizes result usage', () => {
     type: 'result', subtype: 'success', is_error: false, result: 'done',
     usage: { input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 3 },
   }), {
-    kind: 'result', success: true, text: 'done', subtype: 'success',
+    kind: 'result', success: true, text: 'done', subtype: 'success', interrupted: false,
     usage: { inputTokens: 13, outputTokens: 4, totalTokens: 17, cacheReadTokens: 3 },
   })
+})
+
+test('marks an interrupted turn and keeps its cost', () => {
+  const event = parseClaudeEvent({
+    type: 'result', subtype: 'error_during_execution', is_error: true, result: null,
+    total_cost_usd: 0.0123, duration_ms: 4400, num_turns: 1,
+    usage: { input_tokens: 5, output_tokens: 2 },
+  })
+  assert.equal(event.kind, 'result')
+  assert.equal(event.interrupted, true)
+  assert.equal(event.costUsd, 0.0123)
+  assert.equal(event.durationMs, 4400)
+  assert.equal(event.numTurns, 1)
+})
+
+test('parses thinking, tool-use and compaction events', () => {
+  const thinking = { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'hmm' } } }
+  const tool = { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'mcp__local_dsh__read', input: {} }] } }
+  const compact = { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto' } }
+  assert.deepEqual(parseClaudeEvent(thinking), { kind: 'thinking-delta', text: 'hmm' })
+  assert.deepEqual(parseClaudeEvent(tool), { kind: 'tool-use', name: 'mcp__local_dsh__read', input: {} })
+  assert.equal(parseClaudeEvent(compact).kind, 'compact')
 })

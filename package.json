@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-remote-claude",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Run Claude Code on a VPS while keeping workspace files, shell commands, approvals, and tool results inside DeepSeek Harness.",
   "type": "module",
   "private": true,
@@ -52,7 +52,7 @@
   },
   "scripts": {
     "test": "node --test --test-isolation=none test/*.test.js",
-    "check": "node --check index.js && node --check client.js && node --check lib/config-api.js && node --check lib/adapter.js && node --check lib/claude-protocol.js && node --check lib/manager.js && node --check lib/mcp-gateway.js && node --check lib/ndjson-cursor.js && node --check lib/remote-session.js && node --check lib/ssh-client.js && node --check lib/util.js && node --check lib/model-catalog.js && node --check lib/statistics.js && node --check lib/remote-probe.js && node --check lib/runtime-api.js && node --test --test-isolation=none test/*.test.js"
+    "check": "node --check index.js && node --check client.js && node --check lib/config-api.js && node --check lib/adapter.js && node --check lib/claude-protocol.js && node --check lib/manager.js && node --check lib/mcp-gateway.js && node --check lib/ndjson-cursor.js && node --check lib/remote-session.js && node --check lib/ssh-client.js && node --check lib/util.js && node --check lib/model-catalog.js && node --check lib/statistics.js && node --check lib/remote-probe.js && node --check lib/runtime-api.js && node --check lib/activity.js && node --check lib/control-api.js && node --test --test-isolation=none test/*.test.js"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-llm": ">=0.2.1-rc.2 <0.3.0-0"
