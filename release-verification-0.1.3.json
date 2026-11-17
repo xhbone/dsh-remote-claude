@@ -1,0 +1,29 @@
+{
+  "status": "passed",
+  "version": "0.1.3",
+  "tests": 37,
+  "archive": "C:\\Users\\29289\\Documents\\deepseek-harness\\default-workspace\\dsh-remote-claude\\local-dsh-remote-claude-0.1.3.tgz",
+  "archiveBytes": 25083,
+  "archiveSha256": "3c459b2f3e9dd1fe4eaf917e8b487633bd8138bf9d9354caeb1730c5828d1802",
+  "entries": [
+    "package/LICENSE",
+    "package/README.md",
+    "package/THIRD_PARTY_NOTICES.md",
+    "package/VALIDATION.md",
+    "package/assets/remote-claude.svg",
+    "package/client.js",
+    "package/cordis.patch.yml",
+    "package/index.js",
+    "package/lib/adapter.js",
+    "package/lib/claude-protocol.js",
+    "package/lib/config-api.js",
+    "package/lib/manager.js",
+    "package/lib/mcp-gateway.js",
+    "package/lib/ndjson-cursor.js",
+    "package/lib/remote-session.js",
+    "package/lib/ssh-client.js",
+    "package/lib/util.js",
+    "package/package.json"
+  ],
+  "checkedAt": "2026-11-17T00:48:48.315Z"
+}

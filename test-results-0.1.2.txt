@@ -1,0 +1,41 @@
+﻿鉁?adapter emits canonical text, usage, and terminal finish ordering (1.4251ms)
+鉁?adapter rejects unsupported sampling options (0.4445ms)
+鉁?message projection separates effective system and latest user text (0.3281ms)
+鉁?connection form writes the secret only to credentials and saves the reference with CAS (0.4884ms)
+鉁?connection form refuses missing credentials before writing connection settings (0.3024ms)
+鉁?connection form rejects mixed authentication before any credential mutation (0.312ms)
+鉁?key authentication does not access password credentials (0.189ms)
+鉁?notification tools/call cannot execute and errors preserve request ids (30.1337ms)
+鉁?independent HTTP calls execute serially (13.1733ms)
+鉁?revoking the turn aborts in-flight authorization and blocks queued calls (10.3772ms)
+鉁?a concurrent request cannot dispose another active turn (1.1346ms)
+鉁?auxiliary purposes use independent remote conversations (0.4171ms)
+鉁?consumer return disposes an unfinished remote turn (0.2329ms)
+鉁?complete oversized NDJSON lines are rejected (0.3469ms)
+鉁?turn cursor commits only consumed result and stdin contains an actual LF (2.3007ms)
+鉁?abort closes a blocked output stream and clears authorization (1.4523ms)
+鉁?SSH exec never reports success without an exit status (2.682ms)
+鉁?a channel delivered after cancellation is closed (0.3542ms)
+鉁?exposes only the DSH turn allowlist and executes through the bound agent (13.7638ms)
+鉁?commits offsets only after complete LF-delimited records (0.2502ms)
+鉁?advances over malformed complete lines without breaking later events (0.1809ms)
+鉁?builds Claude stream-json user input with replay correlation uuid (0.0846ms)
+鉁?builds fail-safe interrupt control request (0.1603ms)
+鉁?normalizes top-level deltas and ignores subagent deltas (0.0723ms)
+鉁?normalizes result usage (0.0801ms)
+鉁?quotes shell values and rejects unsafe home-relative paths (0.0751ms)
+鉁?remote script disables built-ins and confines access to local DSH MCP tools (0.0952ms)
+鉁?create command transfers configuration as base64 and uses a detached process group (0.0728ms)
+鉁?password references are re-resolved for each SSH connection (0.5173ms)
+鉁?an unset password fails before opening an SSH transport (0.103ms)
+鉁?password authentication still refuses an untrusted host key (0.1565ms)
+鉁?invalid reference names and ambiguous authentication fail before resolution (0.1675ms)
+鉁?cancelling a pending credential resolution never opens a connection (0.1284ms)
+鈩?tests 33
+鈩?suites 0
+鈩?pass 33
+鈩?fail 0
+鈩?cancelled 0
+鈩?skipped 0
+鈩?todo 0
+鈩?duration_ms 181.6854

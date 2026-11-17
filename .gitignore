@@ -1,0 +1,5 @@
+node_modules/
+*.tgz
+smoke-test/
+final-test-results-*.txt
+.pnpm-store/
