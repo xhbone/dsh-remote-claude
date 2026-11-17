@@ -18,6 +18,32 @@ dsh-remote-claude\
 
 不要复制：`test/`、`smoke-test/`、`*.tgz`、`final-test-results-*.txt`（可选，不影响运行）。
 
+## 1.5 从 GitHub 安装（推荐）
+
+源码仓库建议设为**私有**：本包改造自没有 LICENSE 的 `HEYD66/claude-bridge`，公开分发存在授权风险（详见 `THIRD_PARTY_NOTICES.md`）。
+
+安装包可以在仓库的 Release 附件里下载，也可以直接从仓库装。目标机器需要已获得该私有仓库的权限（SSH key 或 token）。
+
+```powershell
+# 方式 1：直接装 git 依赖（私有仓库需本机 SSH key 已授权给 GitHub）
+cd "$env:USERPROFILE\.dsh\profiles\desktop"
+pnpm add "git+ssh://git@github.com/<你的账号>/dsh-remote-claude.git#v0.2.0"
+```
+
+```powershell
+# 方式 2：克隆后以本地目录安装（改源码、调试时用）
+git clone git@github.com:<你的账号>/dsh-remote-claude.git C:\src\dsh-remote-claude
+cd "$env:USERPROFILE\.dsh\profiles\desktop"
+pnpm add "C:\src\dsh-remote-claude"
+```
+
+```powershell
+# 方式 3：装 Release 里的 tgz（无需 git 权限，最省事）
+pnpm add "C:\path\to\local-dsh-remote-claude-0.2.0.tgz"
+```
+
+三种方式都要手动把 `"@local/dsh-remote-claude"` 补进 profile `package.json` 的 `dsh.profile.bundles`，然后重启 DSH。
+
 ## 2. 目标机器前置条件
 
 - DSH 桌面版 `>=0.2.1-rc.2 <0.3.0-0`，Node.js `>=22.19.0`（DSH 自带运行时即可）。
