@@ -93,6 +93,30 @@ test('turn cursor commits only consumed result and stdin contains an actual LF',
   assert.ok(commands.some((command) => command.includes(`-c +${Buffer.byteLength(result) + 1}`)))
 })
 
+test('projects subagent text into the main reply', async (t) => {
+  const subagent = `${JSON.stringify({ type: 'assistant', parent_tool_use_id: 'toolu_child', message: { role: 'assistant', content: [{ type: 'text', text: 'child says hi' }] } })}\n`
+  const result = `${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'final' })}\n`
+  const exit = `${JSON.stringify({ type: 'bridge_exit', code: 0 })}\n`
+  const { session } = fakeRemote([subagent + result + exit])
+  t.after(() => session.dispose())
+  const chunks = await collect(session.turn({ prompt: '你好', system: 'test system', tools: [], agent: { id: 'session-1' } }))
+  const text = chunks.filter(chunk => chunk.type === 'text').map(chunk => chunk.text).join('')
+  assert.match(text, /子代理输出/)
+  assert.match(text, /> child says hi/)
+})
+
+test('rejects a remote protocol version below the verified minimum', async (t) => {
+  const init = `${JSON.stringify({ type: 'system', subtype: 'init', model: 'sonnet', claude_code_version: '2.0.9' })}\n`
+  const result = `${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'done' })}\n`
+  const exit = `${JSON.stringify({ type: 'bridge_exit', code: 0 })}\n`
+  const { session } = fakeRemote([init + result + exit])
+  t.after(() => session.dispose())
+  await assert.rejects(
+    () => collect(session.turn({ prompt: '你好', system: 'test system', tools: [], agent: { id: 'session-1' } })),
+    /2\.0\.9|CLAUDE_VERSION_UNSUPPORTED/,
+  )
+})
+
 test('abort closes a blocked output stream and clears authorization', async (t) => {
   const { session } = fakeRemote([])
   let cleared = 0

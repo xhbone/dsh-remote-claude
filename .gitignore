@@ -3,3 +3,4 @@ node_modules/
 smoke-test/
 final-test-results-*.txt
 .pnpm-store/
+.dsh-tmp/

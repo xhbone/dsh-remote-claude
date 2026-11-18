@@ -72,7 +72,9 @@ test('tool start and end are tracked on the snapshot', () => {
   assert.equal(log.snapshot().tool.argsPreview, 'src/app.ts')
   log.toolEnd(true, 120)
   assert.equal(log.snapshot().tool, undefined)
-  assert.deepEqual(log.entries.at(-1), { at: 1_000, kind: 'tool', label: 'mcp__local_dsh__read', detail: '', ok: true, ms: 120, count: 1 })
+  const { id, ...entry } = log.entries.at(-1)
+  assert.match(id, /^e\d+$/)
+  assert.deepEqual(entry, { at: 1_000, kind: 'tool', label: 'mcp__local_dsh__read', detail: '', ok: true, ms: 120, count: 1 })
 })
 
 test('endTurn records usage and can mark the turn paused', () => {

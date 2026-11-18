@@ -12,11 +12,23 @@ window.__ModuleLoader__.load({
       ['passwordRef', '密码凭据引用名'], ['privateKeyPath', '本机私钥路径（可选）'],
       ['agent', 'SSH agent socket（可选）'],
     ]
+    const advancedFields = [
+      ['remoteBaseDir', '远端运行目录', 'text'],
+      ['idleSessionMs', '空闲回收（毫秒）', 'number'],
+      ['connectTimeoutMs', 'SSH 连接超时（毫秒）', 'number'],
+      ['turnIdleTimeoutMs', '无输出看门狗（毫秒，0 关闭）', 'number'],
+      ['turnReconnectAttempts', '断线重连次数（0 关闭）', 'number'],
+      ['auxiliaryModel', '标题/压缩辅助模型', 'text'],
+      ['retentionDays', '已结束 run 的保留天数（0 永不删除）', 'number'],
+    ]
     const defaults = { host: '', port: 22, username: '', knownHostFingerprint: '',
       claudePath: 'claude', claudeModel: 'sonnet', reasoningEffort: 'default', customModels: '',
       passwordRef: DEFAULT_REF, privateKeyPath: '', agent: '',
-      activityPanel: true, showThinking: true, pauseHint: '', stopHint: '',
-      pauseTimeoutMs: 8000, activityPollMs: 1500, cancelBehavior: 'stop' }
+      activityPanel: true, showThinking: true, showSubagentText: true, pauseHint: '', stopHint: '',
+      pauseTimeoutMs: 8000, activityPollMs: 1500, cancelBehavior: 'stop',
+      remoteBaseDir: '.dsh-remote-claude', idleSessionMs: 1800000, connectTimeoutMs: 20000,
+      restrictedMode: true, auxiliaryModel: 'haiku', turnIdleTimeoutMs: 300000,
+      allowRemoteWebTools: false, remoteBuiltinTools: 'none', turnReconnectAttempts: 5, retentionDays: 7 }
     const EFFORTS = ['default', 'low', 'medium', 'high', 'xhigh', 'max']
     const EFFORT_LABELS = { default: '默认（交给远端）', low: '低 low', medium: '中 medium', high: '高 high', xhigh: '极高 xhigh', max: '最大 max' }
     const inputStyle = { width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1px solid var(--color-border, #ccc)', borderRadius: 6, color: 'inherit', background: 'transparent' }
@@ -50,11 +62,18 @@ window.__ModuleLoader__.load({
           const error = new Error(value.code || 'RuntimeUnavailable')
           error.code = value.code
           error.detail = value.message
+          error.hint = value.hint
+          error.checks = value.checks
           throw error
         }
         return value
       }
-      return { read: (sessionId) => request('GET', sessionId), refresh: () => request('POST', undefined, 'refresh') }
+      return {
+        read: (sessionId) => request('GET', sessionId),
+        refresh: () => request('POST', undefined, 'refresh'),
+        test: () => request('POST', undefined, 'test'),
+        cleanup: () => request('POST', undefined, 'cleanup'),
+      }
     }
 
     function createActivityApi(fetcher = fetch) {
@@ -113,13 +132,21 @@ window.__ModuleLoader__.load({
         let mounted = true
         let timer
         const tick = async () => {
+          let delay = 1500
           try {
             const snapshot = await createActivityApi().read(sessionId)
             if (mounted) { setData(snapshot); setNote('') }
+            // The Host returns the configured poll interval; idle sessions back
+            // off so a quiet strip does not poll every 1.5s forever.
+            const base = Number.isFinite(snapshot?.pollMs) && snapshot.pollMs > 0 ? snapshot.pollMs : 1500
+            const idle = !snapshot?.activity || snapshot.activity.state === 'idle' || snapshot.activity.state === 'stopped'
+            delay = document.visibilityState === 'hidden'
+              ? Math.max(6000, base * 4)
+              : (idle ? Math.max(10000, base * 4) : Math.max(500, base))
           } catch (error) {
             if (mounted && error?.code === 'SESSION_UNAVAILABLE') setData({ available: false })
           }
-          if (mounted) timer = setTimeout(tick, document.visibilityState === 'hidden' ? 6000 : 1500)
+          if (mounted) timer = setTimeout(tick, delay)
         }
         void tick()
         return () => { mounted = false; clearTimeout(timer) }
@@ -141,6 +168,10 @@ window.__ModuleLoader__.load({
         } finally { setBusy(false) }
       }
       const entries = expanded && Array.isArray(activity.entries) ? activity.entries.slice(-6).reverse() : []
+      // The ledger view nests counters under `totals`; older snapshots used the
+      // flat shape, so accept both instead of rendering "undefined↑".
+      const usage = data.usage?.totals ?? data.usage ?? null
+      const fiveHour = (data.rateLimit?.windows ?? []).find(window => window.id === 'five_hour')
       return h('div', { style: { display: 'grid', gap: 6, padding: '6px 2px', fontSize: 12, borderTop: '1px solid var(--color-border, #e4e4e4)' } },
         h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' } },
           h('span', { style: { width: 8, height: 8, borderRadius: 4, background: color, flex: '0 0 auto' } }),
@@ -149,8 +180,12 @@ window.__ModuleLoader__.load({
           activity.effort && activity.effort !== 'default' ? h('span', { style: { opacity: 0.75 } }, `思考 ${activity.effort}`) : null,
           activity.elapsedMs ? h('span', { style: { opacity: 0.75 } }, `已用 ${durationText(activity.elapsedMs)}`) : null,
           typeof activity.silentMs === 'number' && activity.silentMs > 3000 ? h('span', { style: { opacity: 0.75 } }, `静默 ${durationText(activity.silentMs)}`) : null,
-          activity.tool ? h('span', { style: { opacity: 0.75 } }, `工具 ${activity.tool}`) : null,
-          data.usage ? h('span', { style: { opacity: 0.75 } }, `${data.usage.inputTokens}↑ ${data.usage.outputTokens}↓`) : null,
+          activity.tool ? h('span', { style: { opacity: 0.75 } }, `工具 ${activity.tool.name || activity.tool}${activity.tool.argsPreview ? ` ${activity.tool.argsPreview}` : ''}`) : null,
+          typeof usage?.inputTokens === 'number' ? h('span', { style: { opacity: 0.75 } }, `${usage.inputTokens}↑ ${usage.outputTokens ?? 0}↓`) : null,
+          fiveHour && typeof fiveHour.utilization === 'number'
+            ? h('span', { style: { color: fiveHour.utilization >= 90 ? '#d33d3d' : 'inherit', fontWeight: fiveHour.utilization >= 90 ? 600 : 400, opacity: fiveHour.utilization >= 90 ? 1 : 0.75 } },
+                `5h ${percentText(fiveHour.utilization)}`)
+            : null,
           typeof cost === 'number' && cost > 0 ? h('span', { style: { opacity: 0.75 } }, `$${cost.toFixed(4)}`) : null,
           h('span', { style: { flex: 1 } }),
           busy || paused
@@ -163,10 +198,15 @@ window.__ModuleLoader__.load({
         paused ? h('p', { style: { margin: 0, opacity: 0.78 } }, activity.state === 'stopped'
           ? '远端进程已回收；发送任意消息会从 DSH 历史重建会话。'
           : '已暂停：发送任意消息即可继续，远端上下文仍保留。') : null,
+        fiveHour && fiveHour.utilization >= 90
+          ? h('p', { style: { margin: 0, color: '#d33d3d' } }, `5 小时窗口已用 ${percentText(fiveHour.utilization)}${fiveHour.resetsAt ? resetText(fiveHour.resetsAt) : ''}；接近上限时远端可能拒绝请求。`)
+          : (data.rateLimit?.status === 'rejected'
+              ? h('p', { style: { margin: 0, color: '#d33d3d' } }, '远端返回 rate_limit rejected：本窗口额度已耗尽，请稍后再试或切换账号。')
+              : null),
         note ? h('p', { role: 'status', style: { margin: 0, color: '#c05a00' } }, note) : null,
         entries.length
-          ? h('div', { style: { display: 'grid', gap: 2, opacity: 0.82 } }, entries.map(entry =>
-              h('div', { key: entry.id, style: { display: 'flex', gap: 8, alignItems: 'baseline' } },
+          ? h('div', { style: { display: 'grid', gap: 2, opacity: 0.82 } }, entries.map((entry, index) =>
+              h('div', { key: entry.id || `${entry.at}-${index}`, style: { display: 'flex', gap: 8, alignItems: 'baseline' } },
                 h('span', { style: { opacity: 0.6, fontVariantNumeric: 'tabular-nums' } }, clockText(entry.at)),
                 h('span', null, entry.label),
                 entry.count > 1 ? h('span', { style: { opacity: 0.6 } }, `×${entry.count}`) : null)))
@@ -174,9 +214,10 @@ window.__ModuleLoader__.load({
     }
 
     function runtimeFailure(error) {
-      if (error?.code === 'REMOTE_DISCOVERY_FAILED') return '无法读取远端模型目录与额度：请确认 VPS 可达、远端用户可运行 python3，且 Claude Code 2.x 正常；先在下方保存连接再刷新。'
       if (error?.code === 'CONNECTION_CHANGED') return '刷新期间连接配置发生变化，请重新刷新。'
       if (error?.code === 'REFRESH_IN_PROGRESS') return '上一次刷新还在进行，请稍候。'
+      if (error?.hint) return [error.detail, error.hint].filter(Boolean).join(' · ')
+      if (error?.detail) return error.detail
       return '无法读取运行时信息，请确认 Host 插件已启用。'
     }
 
@@ -228,12 +269,20 @@ window.__ModuleLoader__.load({
       const [runtimeBusy, setRuntimeBusy] = useState(false)
       const [runtimeMessage, setRuntimeMessage] = useState('正在读取远端模型目录与额度…')
       const [manualModel, setManualModel] = useState(false)
+      const [testBusy, setTestBusy] = useState(false)
+      const [checks, setChecks] = useState(null)
+      const [observedFingerprint, setObservedFingerprint] = useState(null)
+      const [cleanupBusy, setCleanupBusy] = useState(false)
+      const [cleanupMessage, setCleanupMessage] = useState('')
 
       useEffect(() => {
         let mounted = true
         Promise.resolve().then(() => createConnectionApi().read()).then((snapshot) => {
           if (!mounted) return
-          const value = { ...defaults, ...snapshot.value, passwordRef: snapshot.value.passwordRef || DEFAULT_REF }
+          // Only offer the default credential reference in password mode. With
+          // key/agent auth an auto-filled ref would fail the exclusivity check.
+          const keyAuth = Boolean(snapshot.value.privateKeyPath || snapshot.value.agent)
+          const value = { ...defaults, ...snapshot.value, passwordRef: snapshot.value.passwordRef || (keyAuth ? '' : DEFAULT_REF) }
           setConfig(value)
           setRevision(snapshot.revision)
           setReady(snapshot.writable)
@@ -282,6 +331,38 @@ window.__ModuleLoader__.load({
         } finally { setRuntimeBusy(false) }
       }
 
+      async function runTest() {
+        if (testBusy) return
+        setTestBusy(true)
+        setChecks(null)
+        setObservedFingerprint(null)
+        setRuntimeMessage('正在检查 SSH、端口转发、bash/setsid/GNU tail 与 Claude 控制通道…')
+        try {
+          const snapshot = await createRuntimeApi().test()
+          setChecks(snapshot.checks ?? [])
+          setObservedFingerprint(snapshot.observedFingerprint ?? null)
+          setRuntimeMessage(snapshot.ok ? '连接检查全部通过。' : '连接检查发现问题，见下方逐项结果。')
+          if (snapshot.models) setModels(Array.isArray(snapshot.models) ? snapshot.models : [])
+          if (snapshot.version) setVersion(snapshot.version)
+        } catch (error) {
+          setChecks(Array.isArray(error.checks) ? error.checks : null)
+          setObservedFingerprint(error.observedFingerprint ?? null)
+          setRuntimeMessage([error.detail, error.hint].filter(Boolean).join(' · ') || runtimeFailure(error))
+        } finally { setTestBusy(false) }
+      }
+
+      async function runCleanup() {
+        if (cleanupBusy) return
+        setCleanupBusy(true)
+        setCleanupMessage('正在清理远端已结束的运行目录…')
+        try {
+          const result = await createRuntimeApi().cleanup()
+          setCleanupMessage(`已清理：回收 ${result.reaped ?? 0} 个残留进程，删除 ${result.removed ?? 0} 个运行目录。`)
+        } catch (error) {
+          setCleanupMessage([error.detail, error.hint].filter(Boolean).join(' · ') || '清理失败，请确认连接可用。')
+        } finally { setCleanupBusy(false) }
+      }
+
       async function save(event) {
         event.preventDefault()
         if (busy || !ready) return
@@ -313,11 +394,22 @@ window.__ModuleLoader__.load({
             customModels: custom.join(' '),
             activityPanel: Boolean(config.activityPanel),
             showThinking: Boolean(config.showThinking),
+            showSubagentText: Boolean(config.showSubagentText),
             pauseHint: String(config.pauseHint ?? '').trim(),
             stopHint: String(config.stopHint ?? '').trim(),
             pauseTimeoutMs: Number(config.pauseTimeoutMs) || 8000,
             activityPollMs: Number(config.activityPollMs) || 1500,
             cancelBehavior: String(config.cancelBehavior) === 'pause' ? 'pause' : 'stop',
+            remoteBaseDir: String(config.remoteBaseDir ?? '').trim(),
+            idleSessionMs: Number(config.idleSessionMs) || 1800000,
+            connectTimeoutMs: Number(config.connectTimeoutMs) || 20000,
+            turnIdleTimeoutMs: Number(config.turnIdleTimeoutMs) || 0,
+            turnReconnectAttempts: Number(config.turnReconnectAttempts) || 0,
+            auxiliaryModel: String(config.auxiliaryModel ?? '').trim(),
+            restrictedMode: Boolean(config.restrictedMode),
+            allowRemoteWebTools: String(config.remoteBuiltinTools) !== 'none',
+            remoteBuiltinTools: ['none', 'web', 'all'].includes(String(config.remoteBuiltinTools)) ? String(config.remoteBuiltinTools) : 'none',
+            retentionDays: Number(config.retentionDays) || 0,
           })
           const row = await createConnectionApi().save(patch, password, revision)
           setPassword('')
@@ -395,11 +487,15 @@ window.__ModuleLoader__.load({
             h('input', { type: 'checkbox', checked: Boolean(config.showThinking), disabled: busy || !ready,
               onChange: (event) => update('showThinking', event.target.checked) }),
             '把远端思考过程一起流式显示'),
+          h('label', { style: { display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 } },
+            h('input', { type: 'checkbox', checked: Boolean(config.showSubagentText), disabled: busy || !ready,
+              onChange: (event) => update('showSubagentText', event.target.checked) }),
+            '把 Claude Code 子代理的输出以引用块显示在主回复里'),
           h('label', { style: { display: 'grid', gap: 4 } }, 'DSH 侧取消一次回复',
             h('select', { 'aria-label': '取消行为', value: String(config.cancelBehavior || 'stop'), disabled: busy || !ready, style: inputStyle,
               onChange: (event) => update('cancelBehavior', event.target.value) },
-              h('option', { value: 'stop' }, '停止 stop（回收远端进程）'),
-              h('option', { value: 'pause' }, '暂停 pause（发送 interrupt 后回收，下次重放历史）'))),
+              h('option', { value: 'stop' }, '停止 stop（回收远端进程，下次从压缩历史重建）'),
+              h('option', { value: 'pause' }, '暂停 pause（发送 interrupt，保留远端进程与会话，下次 --resume 续接）'))),
           h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 } },
             h('label', { style: { display: 'grid', gap: 4 } }, '暂停确认超时（毫秒）',
               h('input', { 'aria-label': '暂停超时', type: 'number', min: 500, max: 60000, value: config.pauseTimeoutMs ?? 8000, disabled: busy || !ready, style: inputStyle,
@@ -413,7 +509,46 @@ window.__ModuleLoader__.load({
           h('label', { style: { display: 'grid', gap: 4 } }, '停止提示（留空用默认文案）',
             h('input', { 'aria-label': '停止提示', value: config.stopHint ?? '', disabled: busy || !ready, autoComplete: 'off', style: inputStyle,
               onChange: (event) => update('stopHint', event.target.value) })),
+          h('p', { style: hintStyle }, '「停止」会回收远端进程并删除本次运行目录，下一条消息从 DSH 压缩历史重建；「暂停」保留远端进程与会话，下一条消息通过 --resume 续接同一上下文。'),
           h('p', { style: hintStyle }, '面板轮询与暂停/停止都只走本机 HTTP 和 interrupt 控制帧，不发送用户消息，不消耗额度。')),
+
+        h('div', { style: cardStyle },
+          h('strong', null, '远端运行环境'),
+          ...advancedFields.map(([key, label, type]) => h('label', { key, style: { display: 'grid', gap: 4 } }, label,
+            h('input', { 'aria-label': label, type: type || 'text', value: config[key] ?? '', disabled: busy || !ready,
+              autoComplete: 'off', style: inputStyle,
+              onChange: (event) => update(key, event.target.value) }))),
+          h('label', { style: { display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 } },
+            h('input', { type: 'checkbox', checked: Boolean(config.restrictedMode), disabled: busy || !ready,
+              onChange: (event) => update('restrictedMode', event.target.checked) }),
+            '限制模式（给远端 CLI 传 --restricted；与内建工具开关相互独立）'),
+          h('label', { style: { display: 'grid', gap: 4, fontSize: 13 } }, '远端内建工具',
+            h('select', { value: config.remoteBuiltinTools ?? 'none', disabled: busy || !ready, style: inputStyle,
+              onChange: (event) => update('remoteBuiltinTools', event.target.value) },
+              h('option', { value: 'none' }, '全关（默认，最安全）'),
+              h('option', { value: 'web' }, '只放行 WebSearch/WebFetch'),
+              h('option', { value: 'all' }, '放行 Claude Code 默认内建工具（Read/Edit/Bash/skills/hooks，风险更高）'))),
+          h('p', { style: hintStyle }, '辅助模型只用于 DSH 的标题/压缩等 purpose，默认 haiku，避免与主对话争用同一份额度。'),
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+            h('button', { type: 'button', disabled: testBusy || busy || !ready, onClick: runTest, style: { ...inputStyle, width: 'auto', cursor: 'pointer' } },
+              testBusy ? '正在检查…' : '测试连接'),
+            h('button', { type: 'button', disabled: cleanupBusy || !ready, onClick: runCleanup, style: { ...inputStyle, width: 'auto', cursor: 'pointer' } },
+              cleanupBusy ? '正在清理…' : '清理远端运行目录')),
+          cleanupMessage ? h('p', { role: 'status', style: { margin: 0, overflowWrap: 'anywhere' } }, cleanupMessage) : null,
+          checks
+            ? h('div', { style: { display: 'grid', gap: 4 } }, checks.map(check =>
+                h('div', { key: check.id, style: { display: 'grid', gap: 2, fontSize: 12 } },
+                  h('span', { style: { color: check.ok ? '#2f8f4e' : '#d33d3d' } },
+                    `${check.ok ? '通过' : '失败'} · ${check.id}${check.code ? ` (${check.code})` : ''}${check.message ? ` — ${String(check.message).slice(0, 200)}` : ''}`),
+                  !check.ok && check.hint ? h('span', { style: { opacity: 0.75 } }, check.hint) : null)))
+            : null,
+          observedFingerprint
+            ? h('div', { style: { display: 'grid', gap: 4 } },
+                h('p', { style: hintStyle }, `远端主机指纹：${observedFingerprint}`),
+                h('button', { type: 'button', style: { ...inputStyle, width: 'auto', cursor: 'pointer' },
+                  onClick: () => { update('knownHostFingerprint', observedFingerprint); setMessage('已把观察到的指纹填入上方；核对无误后点击「保存 Remote Claude 连接」才会生效。') } },
+                  '使用此指纹'))
+            : null),
 
         ...connectionFields.slice(5).map(([key, label, type]) => h('label', { key, style: { display: 'grid', gap: 4 } }, label,
           h('input', { 'aria-label': label, type: type || 'text', value: config[key] ?? '', disabled: busy || !ready,

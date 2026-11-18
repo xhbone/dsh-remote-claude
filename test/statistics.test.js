@@ -76,3 +76,16 @@ test('latest rate limit reports the most recent session reading', () => {
   assert.equal(latest.sessionId, 's1')
   assert.equal(typeof latest.updatedAt, 'string')
 })
+
+test('ledger persists totals across instances', async () => {
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const file = join(mkdtempSync(join(tmpdir(), 'ledger-')), 'ledger.json')
+  const first = new UsageLedger({ file })
+  first.record('session-a', 'run-1', { type: 'statistics', usage: { inputTokens: 10, outputTokens: 5 }, costUsd: 0.25, model: 'sonnet', success: true }, undefined)
+  const second = new UsageLedger({ file })
+  assert.equal(second.get('session-a').totals.inputTokens, 10)
+  assert.equal(second.get('session-a').costUsd, 0.25)
+  assert.equal(second.aggregate().turns, 1)
+})

@@ -22,6 +22,31 @@ test('builds fail-safe interrupt control request', () => {
   })
 })
 
+test('surfaces subagent assistant text with its parent tool call', () => {
+  const event = parseClaudeEvent({
+    type: 'assistant',
+    parent_tool_use_id: 'toolu_child',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'child result' }],
+      usage: { input_tokens: 2, output_tokens: 3, cache_read_input_tokens: 4 },
+    },
+  })
+  assert.equal(event.kind, 'subagent-text')
+  assert.equal(event.text, 'child result')
+  assert.equal(event.parentToolUseId, 'toolu_child')
+  assert.equal(event.usage.inputTokens, 6)
+})
+
+test('reports task lifecycle events as subagent activity', () => {
+  const started = parseClaudeEvent({ type: 'system', subtype: 'task_started', description: 'scan repo', task_id: 'task-1' })
+  assert.deepEqual(started, { kind: 'subagent-start', description: 'scan repo', taskId: 'task-1' })
+  assert.deepEqual(
+    parseClaudeEvent({ type: 'system', subtype: 'task_notification', status: 'completed', summary: 'done' }),
+    { kind: 'subagent-done', status: 'completed', summary: 'done' },
+  )
+})
+
 test('normalizes top-level deltas and ignores subagent deltas', () => {
   const delta = { type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } } }
   assert.deepEqual(parseClaudeEvent(delta), { kind: 'text-delta', text: 'ok' })
@@ -33,19 +58,22 @@ test('normalizes result usage', () => {
     type: 'result', subtype: 'success', is_error: false, result: 'done',
     usage: { input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 3 },
   }), {
-    kind: 'result', success: true, text: 'done', subtype: 'success', interrupted: false,
+    kind: 'result', success: true, text: 'done', subtype: 'success',
     usage: { inputTokens: 13, outputTokens: 4, totalTokens: 17, cacheReadTokens: 3 },
   })
 })
 
-test('marks an interrupted turn and keeps its cost', () => {
+test('keeps the cost and subtype of an unconfirmed execution error', () => {
   const event = parseClaudeEvent({
     type: 'result', subtype: 'error_during_execution', is_error: true, result: null,
     total_cost_usd: 0.0123, duration_ms: 4400, num_turns: 1,
     usage: { input_tokens: 5, output_tokens: 2 },
   })
   assert.equal(event.kind, 'result')
-  assert.equal(event.interrupted, true)
+  // The session decides whether this is a pause (only when it sent the interrupt).
+  assert.equal('interrupted' in event, false)
+  assert.equal(event.success, false)
+  assert.equal(event.subtype, 'error_during_execution')
   assert.equal(event.costUsd, 0.0123)
   assert.equal(event.durationMs, 4400)
   assert.equal(event.numTurns, 1)

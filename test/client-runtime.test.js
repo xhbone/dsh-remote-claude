@@ -22,7 +22,8 @@ function fixture({ probe } = {}) {
     agents: { get: () => ({ id: 'session-1' }) },
     settings: { describe: () => [row], async update(ns, value, revision) { row = { ...row, revision: revision + 1, value: { ...row.value, ...value } } } },
   }
-  const handler = createRuntimeHandler(ctx, config, new UsageLedger(), probe ? { probe } : {})
+  const manager = { ledger: new UsageLedger(), cleanupRemoteRuns: async () => ({ reaped: 0, removed: 0 }) }
+  const handler = createRuntimeHandler(ctx, config, manager, probe ? { probe } : {})
   const seen = []
   const fetcher = async (path, options) => {
     seen.push([path, options.method, options.credentials, options.cache])
@@ -56,5 +57,5 @@ test('runtime Client API refreshes and exposes the discovered catalog', async ()
 
 test('runtime failures keep their machine code for the form to translate', async () => {
   const f = fixture({ probe: async () => { throw new Error('private ssh detail') } })
-  await assert.rejects(f.api.refresh(), error => error.code === 'REMOTE_DISCOVERY_FAILED' && !error.message.includes('private ssh detail'))
+  await assert.rejects(f.api.refresh(), error => error.code === 'REFRESH_FAILED' && !error.message.includes('private ssh detail'))
 })

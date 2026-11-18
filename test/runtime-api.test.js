@@ -14,10 +14,10 @@ const usage = {
   },
 }
 
-function fixture({ probe, sessionExists = id => id === 'session-1' } = {}) {
+function fixture({ probe, createSsh, sessionExists = id => id === 'session-1' } = {}) {
   const updates = []
   let row = { ns: 'remote-claude-host', revision: 3, value: { claudeModel: 'sonnet', reasoningEffort: 'default' } }
-  const config = { host: 'vps.test', port: 22, username: 'workspace', claudePath: 'claude', knownHostFingerprint: `SHA256:${'a'.repeat(43)}`, modelCatalog: '[]', customModels: '' }
+  const config = { host: 'vps.test', port: 22, username: 'workspace', claudePath: 'claude', knownHostFingerprint: `SHA256:${'a'.repeat(43)}`, modelCatalog: '[]', customModels: '', activityPollMs: 1500 }
   const ctx = {
     agents: { get: id => sessionExists(id) ? { id } : undefined },
     settings: {
@@ -29,9 +29,10 @@ function fixture({ probe, sessionExists = id => id === 'session-1' } = {}) {
     },
   }
   const ledger = new UsageLedger()
-  const handler = createRuntimeHandler(ctx, config, ledger, probe ? { probe } : {})
+  const manager = { ledger, cleanupRemoteRuns: async () => ({ reaped: 0, removed: 0 }) }
+  const handler = createRuntimeHandler(ctx, config, manager, { ...(probe ? { probe } : {}), ...(createSsh ? { createSsh } : {}) })
   const call = (method, query = '') => handler(new Request(`http://127.0.0.1:20263/api/remote-claude/runtime${query}`, { method }))
-  return { config, ctx, ledger, handler, call, updates, row: () => row }
+  return { config, ctx, ledger, manager, handler, call, updates, row: () => row }
 }
 
 test('GET describes models, effort ids, scope, and an empty quota before any refresh', async () => {
@@ -47,6 +48,7 @@ test('GET describes models, effort ids, scope, and an empty quota before any ref
   assert.equal(body.account.available, false)
   assert.deepEqual(body.account.windows, [])
   assert.equal(body.usage, null)
+  assert.equal(body.pollMs, 1500)
 })
 
 test('session usage is returned only for an existing DSH session', async () => {
@@ -78,12 +80,13 @@ test('refresh persists the discovered catalog and account windows', async () => 
   assert.equal(JSON.parse(f.updates[0][1].modelCatalog)[0].id, 'opus')
 })
 
-test('refresh failures surface as a generic discovery error', async () => {
+test('refresh failures are classified and never echo the raw SSH error', async () => {
   const f = fixture({ probe: async () => { throw new Error('ssh auth failure for user workspace') } })
   const response = await f.call('POST', '?action=refresh')
   assert.equal(response.status, 502)
   const body = await response.json()
-  assert.equal(body.code, 'REMOTE_DISCOVERY_FAILED')
+  assert.equal(body.code, 'AUTH_FAILED')
+  assert.ok(body.hint)
   assert.equal(JSON.stringify(body).includes('ssh auth failure'), false)
   assert.equal(f.updates.length, 0)
 })
@@ -114,5 +117,46 @@ test('concurrent refreshes are serialized', async () => {
 test('unsupported methods and actions are rejected', async () => {
   const f = fixture()
   assert.equal((await f.call('DELETE')).status, 405)
-  assert.equal((await f.call('POST', '?action=other')).status, 405)
+  const unknown = await f.call('POST', '?action=other')
+  assert.equal(unknown.status, 400)
+  assert.equal((await unknown.json()).code, 'UNKNOWN_ACTION')
+})
+
+test('test action reports prerequisites and the observed fingerprint', async () => {
+  const health = [
+    'bash=/bin/bash',
+    'setsid=/usr/bin/setsid',
+    'tail=/usr/bin/tail',
+    'tailver=tail (GNU coreutils) 9.1',
+    'claude=/usr/local/bin/claude',
+  ].join('\n')
+  const observed = `SHA256:${'b'.repeat(43)}`
+  const createSsh = () => ({
+    observedFingerprint: observed,
+    async connect() {},
+    async exec() { return { code: 0, stdout: health, stderr: '' } },
+    async testForward() { return 52345 },
+    async openExec() { throw new Error('probe unavailable in this fixture') },
+    async dispose() {},
+  })
+  const f = fixture({ createSsh })
+  const response = await f.call('POST', '?action=test')
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  const ids = body.checks.map(check => check.id)
+  for (const id of ['ssh', 'bash', 'setsid', 'tail', 'claude', 'forward', 'claude_probe']) assert.ok(ids.includes(id), id)
+  assert.equal(body.checks.find(check => check.id === 'forward').ok, true)
+  assert.equal(body.checks.find(check => check.id === 'claude').ok, true)
+  assert.equal(body.checks.find(check => check.id === 'claude_probe').ok, false)
+  assert.equal(body.observedFingerprint, observed)
+})
+
+test('cleanup action forwards to the manager and reports removed run dirs', async () => {
+  const f = fixture()
+  let called = 0
+  f.manager.cleanupRemoteRuns = async () => { called += 1; return { reaped: 0, removed: 2 } }
+  const response = await f.call('POST', '?action=cleanup')
+  assert.equal(response.status, 200)
+  assert.equal(called, 1)
+  assert.deepEqual(await response.json(), { available: true, ok: true, reaped: 0, removed: 2 })
 })
