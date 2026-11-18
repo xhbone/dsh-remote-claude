@@ -8,6 +8,7 @@ import { NdjsonCursorParser } from '../lib/ndjson-cursor.js'
 
 const config = { idleSessionMs: 1800000, claudeModel: 'sonnet', remoteBaseDir: '.dsh-remote-claude', claudePath: 'claude', restrictedMode: true }
 const options = { sessionId: 'session-1', model: 'claude-code-agent', messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }] }
+const nextOptions = { ...options, messages: [...options.messages, { role: 'assistant', content: [{ type: 'text', text: 'hello' }] }, { role: 'user', content: [{ type: 'text', text: 'next' }] }] }
 const collect = async (iterator) => { const result = []; for await (const item of iterator) result.push(item); return result }
 
 function fakeManager() {
@@ -39,7 +40,7 @@ test('auxiliary purposes use independent remote conversations', async (t) => {
   await collect(manager.stream({ ...options, purpose: 'main' }))
   await collect(manager.stream({ ...options, purpose: 'title' }))
   assert.equal(sessions.length, 2)
-  await collect(manager.stream({ ...options, purpose: 'main' }))
+  await collect(manager.stream({ ...nextOptions, purpose: 'main' }))
   assert.equal(sessions.length, 2)
 })
 
@@ -181,7 +182,7 @@ test('reasoning effort is carried into the session and a change rebuilds it', as
   assert.equal(sessions.length, 1)
   assert.equal(sessions[0].reasoningEffort, 'high')
   assert.equal(sessions[0].model, 'sonnet')
-  await collect(manager.stream({ ...options, reasoningEffort: 'high' }))
+  await collect(manager.stream({ ...nextOptions, reasoningEffort: 'high' }))
   assert.equal(sessions.length, 1)
   await collect(manager.stream({ ...options, reasoningEffort: 'low' }))
   assert.equal(sessions.length, 2)

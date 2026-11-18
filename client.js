@@ -19,7 +19,7 @@ window.__ModuleLoader__.load({
       ['turnIdleTimeoutMs', '无输出看门狗（毫秒，0 关闭）', 'number'],
       ['turnReconnectAttempts', '断线重连次数（0 关闭）', 'number'],
       ['auxiliaryModel', '标题/压缩辅助模型', 'text'],
-      ['retentionDays', '已结束 run 的保留天数（0 永不删除）', 'number'],
+      ['retentionDays', '已结束 run 的保留天数（0 关闭自动清理）', 'number'],
     ]
     const defaults = { host: '', port: 22, username: '', knownHostFingerprint: '',
       claudePath: 'claude', claudeModel: 'sonnet', reasoningEffort: 'default', customModels: '',
@@ -357,7 +357,7 @@ window.__ModuleLoader__.load({
         setCleanupMessage('正在清理远端已结束的运行目录…')
         try {
           const result = await createRuntimeApi().cleanup()
-          setCleanupMessage(`已清理：回收 ${result.reaped ?? 0} 个残留进程，删除 ${result.removed ?? 0} 个运行目录。`)
+          setCleanupMessage(`已删除 ${result.removed ?? 0} 个运行目录。仍在运行或状态未知的目录会保留。`)
         } catch (error) {
           setCleanupMessage([error.detail, error.hint].filter(Boolean).join(' · ') || '清理失败，请确认连接可用。')
         } finally { setCleanupBusy(false) }
@@ -495,7 +495,7 @@ window.__ModuleLoader__.load({
             h('select', { 'aria-label': '取消行为', value: String(config.cancelBehavior || 'stop'), disabled: busy || !ready, style: inputStyle,
               onChange: (event) => update('cancelBehavior', event.target.value) },
               h('option', { value: 'stop' }, '停止 stop（回收远端进程，下次从压缩历史重建）'),
-              h('option', { value: 'pause' }, '暂停 pause（发送 interrupt，保留远端进程与会话，下次 --resume 续接）'))),
+              h('option', { value: 'pause' }, '暂停 pause（发送 interrupt，确认后保留远端进程）'))),
           h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 } },
             h('label', { style: { display: 'grid', gap: 4 } }, '暂停确认超时（毫秒）',
               h('input', { 'aria-label': '暂停超时', type: 'number', min: 500, max: 60000, value: config.pauseTimeoutMs ?? 8000, disabled: busy || !ready, style: inputStyle,
@@ -509,7 +509,7 @@ window.__ModuleLoader__.load({
           h('label', { style: { display: 'grid', gap: 4 } }, '停止提示（留空用默认文案）',
             h('input', { 'aria-label': '停止提示', value: config.stopHint ?? '', disabled: busy || !ready, autoComplete: 'off', style: inputStyle,
               onChange: (event) => update('stopHint', event.target.value) })),
-          h('p', { style: hintStyle }, '「停止」会回收远端进程并删除本次运行目录，下一条消息从 DSH 压缩历史重建；「暂停」保留远端进程与会话，下一条消息通过 --resume 续接同一上下文。'),
+          h('p', { style: hintStyle }, '「停止」会回收远端进程，下一条消息从 DSH 历史重建。「暂停」确认后会保留远端进程，续接前会检查 DSH 是否保留了本轮回复。'),
           h('p', { style: hintStyle }, '面板轮询与暂停/停止都只走本机 HTTP 和 interrupt 控制帧，不发送用户消息，不消耗额度。')),
 
         h('div', { style: cardStyle },

@@ -1,12 +1,12 @@
 # 安装到其他电脑
 
-本插件是标准的 DSH bundle 包：`@local/dsh-remote-claude`。安装包是同目录下的 `local-dsh-remote-claude-0.3.3.tgz`，解包后是 `package/` 目录，包含 Host 入口、Client 包、preset 补丁、文档和 `test/`（可离线复现测试）。
+本插件是标准的 DSH bundle 包：`@local/dsh-remote-claude`。本地安装包是同目录下的 `local-dsh-remote-claude-0.3.5.tgz`，解包后是 `package/` 目录，包含 Host 入口、Client 包、preset 补丁、文档和 `test/`（可离线复现测试）。
 
 ## 1. 导出
 
 只需要两个文件：
 
-- `local-dsh-remote-claude-0.3.3.tgz`（纯源码，不含 `node_modules`，含 `test/`）
+- `local-dsh-remote-claude-0.3.5.tgz`（纯源码，不含 `node_modules`，含 `test/`）
 - 本文件
 
 如果目标机器**不能联网**，改为复制整个源码目录（含 `node_modules`，其中已装好 `ssh2` 与 `@deepseek-ai/schemastery`）：
@@ -38,8 +38,8 @@ pnpm add "C:\src\dsh-remote-claude"
 ```
 
 ```powershell
-# 方式 3：装 Release 里的 tgz（无需 git 权限，最省事）
-pnpm add "C:\path\to\local-dsh-remote-claude-0.3.3.tgz"
+# 方式 3：装本地 tgz
+pnpm add "C:\path\to\local-dsh-remote-claude-0.3.5.tgz"
 ```
 
 三种方式都要手动把 `"@local/dsh-remote-claude"` 补进 profile `package.json` 的 `dsh.profile.bundles`，然后重启 DSH。
@@ -59,7 +59,7 @@ profile 目录：
 
 ### 方式 A：图形界面（推荐）
 
-1. 把 `local-dsh-remote-claude-0.3.3.tgz` 拷到目标机器。
+1. 把 `local-dsh-remote-claude-0.3.5.tgz` 拷到目标机器。
 2. 打开 DSH → 设置 → 插件，选择「从本地文件安装 / 安装本地 bundle」，选中该 tgz。
 3. 等待安装完成，重启 DSH 桌面应用（Client 包在重启时构建）。
 
@@ -70,13 +70,13 @@ profile 目录：
 ```powershell
 # Windows PowerShell
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
-pnpm add "C:\path\to\local-dsh-remote-claude-0.3.3.tgz"
+pnpm add "C:\path\to\local-dsh-remote-claude-0.3.5.tgz"
 ```
 
 ```bash
 # macOS / Linux
 cd ~/.dsh/profiles/desktop
-pnpm add /path/to/local-dsh-remote-claude-0.3.3.tgz
+pnpm add /path/to/local-dsh-remote-claude-0.3.5.tgz
 ```
 
 然后编辑同一个目录下的 `package.json`，把包名加入 `dsh.profile.bundles` 数组（**必须手动加**，`pnpm add` 不会自动选中 bundle）：

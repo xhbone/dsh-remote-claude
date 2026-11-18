@@ -1,10 +1,19 @@
-# Remote Claude 0.3.3 验证记录
+# Remote Claude 0.3.5 验证记录
 
-验证日期：2026-11-18。0.3.3 修复 0.3.2 在 DSH schemastery 下误用 `z.enum` 导致插件加载失败的问题；功能与 0.3.2 相同，包含原生工具卡/日志、条件工具集合、子代理文本、内建工具模式、协议版本下限、持久化账本与更强的清理能力。0.3.2 是 0.3.0 的缺陷修复与可运维性版本，重点在活动条/工具打点、错误与暂停语义、断线重连、`--resume`、运行目录清理、体检与错误分类，以及去 python3 依赖。
+2026-11-18 的本地回归覆盖会话续接、断线处理、上下文用量、思考流和原生工具记录。
+
+## npm 发布版工具契约
+
+在隔离目录安装 `@deepseek-ai/dsh-tools@0.2.1-rc.2`，使用发布版 ToolRuntime 和 Session，通过本机 HTTP 发送 MCP `tools/call`。同一探针在 0.3.4 安装包复现 `Cannot read properties of undefined (reading 'find')`，在 0.3.5 验证参数解析、工具只执行一次、DSH guard 生效、`tool/call` 和 `tool/result` 配对以及 diff 元数据落入会话。桌面批量调用沿用原生日志和步骤准入，有回归测试覆盖。此项验证范围为本机运行时和会话事件。
+
+```bash
+npm install --prefix /path/to/isolated-runtime --ignore-scripts @deepseek-ai/dsh-tools@0.2.1-rc.2
+node scripts/check-tool-runtime.mjs /path/to/isolated-runtime
+```
 
 ## 自动化测试
 
-105 项测试全部通过，失败、取消、跳过均为 0。`node --test --test-isolation=none test/*.test.js`，`npm run check` 会先自动发现并逐文件 `node --check`，再跑同一套测试。
+`npm run check` 自动发现源码并逐文件运行 `node --check`，然后用 `node --test --test-isolation=none test/*.test.js` 执行测试。
 
 新增或更新的覆盖：
 
@@ -15,7 +24,8 @@
 - `test/remote-script.test.js`：`--resume` 与 `allowRemoteWebTools` 的 `--tools`/`--allowedTools` 参数；继续断言不含 `--dangerously-skip-permissions`、创建命令不泄漏 token。
 - `test/runtime-api.test.js`：`pollMs` 下发；`test` 动作返回 ssh/bash/setsid/tail/claude/forward/claude_probe 逐项检查与 observedFingerprint；`cleanup` 动作转发到 manager；刷新失败按错误码分类且不回显原始 SSH 错误。
 - `test/control-api.test.js`：快照随 `pollMs` 与 `rateLimit` 下发。
-- `test/handoff.test.js`：handoff 文件跨 Host 重启保留，可删除，缺失文件视为空。
+- `test/handoff.test.js` 验证 handoff 文件读写。`test/history.test.js` 覆盖正常续接、Host 重启后使用原 UUID、工具结果被投影时的历史校验、重新生成、编辑和旧进程仍存活的退路。
+- `test/turn-stream.test.js` 覆盖公开思考块去重、末条顶层 assistant 的上下文用量，以及 SSH 连接、端口转发或读流失败后按偏移重试。
 - `test/client-activity.test.js` / `test/client-runtime.test.js`：Client API 契约、`test()`/`cleanup()` 方法与错误 code/hint 透传。
 - `test/protocol.test.js` / `test/lifecycle.test.js`：断线后仅对传输错误重连，事件处理错误（`bridge_exit`/`error`/失败 result）直接报错，不再被误当成断线而重连后报「未收到 result」。
 
@@ -64,11 +74,9 @@
 
 ## 尚未完成的实机覆盖与功能限制
 
-- 断线重连、Host 重启后 reattach、看门狗与清理扫描尚未在真实 VPS 上演练；自动化覆盖的是状态机与假 transport。原生工具卡/root 日志也只在 fake AgentLoop 上验证过，需要在真实 DSH GUI 里确认一次。
-- 活动条与「测试连接」「清理远端运行目录」按钮的 GUI 交互需重启桌面应用重建 Client 包后人工确认。
-- Adapter 取不到外层 `ResolvedToolSet`，条件注册工具可能返回 `UNKNOWN_TOOL`。
-- 额度与 token 统计只在当前 Host 进程内保留，重启清零。
-- 远端运行目录保存对话及含临时 MCP token 的私有配置；清理按钮与保留期限只能删除**已结束**的 run，存活进程只会在超过 `max(2 × idleSessionMs, 1h)` 后被 TERM。
+- 自动化测试使用假 SSH transport。仍需在真实 VPS 上验证断网续读、Host 重启后同 UUID 续接、看门狗、清理和缓存读写。Host 重启后的续接从下一条用户消息开始。
+- 桌面版的原生工具卡、diff 卡和设置页交互仍需实机确认。测试覆盖传给 DSH 的原始步骤坐标和工具集合，以及关闭步骤后的调用拒绝。
+- 手动清理保留存活和状态未知的 run。额度与 token 账本保留在本机。
 
 ## 0.1.3 / 0.2.0 已完成的端到端结果（未回归）
 
@@ -83,5 +91,5 @@
 - `remoteBuiltinTools`：`none` / `web` / `all` 三档；`all` 省略 `--tools` 并放行 Claude Code 默认内建工具，安全边界由用户显式选择。
 - 协议版本下限：init 的 `claude_code_version` 低于 2.1.0 时报 `CLAUDE_VERSION_UNSUPPORTED`；主版本更高时在活动流提示。
 - 断线重连默认上限提升到 5 次，并可通过 `turnReconnectAttempts` 调整。
-- 「清理远端运行目录」按钮现在会 TERM 并删除无人认领的存活 run；后台扫描仍按 `max(2 × idleSessionMs, 1h)` 回收。
+- 0.3.2 曾允许手动清理终止其他 Host 的活跃 run。0.3.4 收紧为删除已退出或超过宽限期且无存活进程的目录。
 - 额度/token 账本写入 `~/.dsh-remote-claude/ledger.json`，Host 重启后保留按 session 的累计值与成本高水位。

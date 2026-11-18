@@ -29,7 +29,7 @@ function fixture(configured = true) {
       async resolve(ref) { calls.push(['resolve', ref]); return secret ? { value: secret, source: 'test' } : undefined },
     },
   }
-  const handler = createConnectionHandler(ctx, async () => { calls.push(['reset']) })
+  const handler = createConnectionHandler(ctx, async ({ reconnect }) => { calls.push(['afterSave', reconnect]) })
   const fetcher = async (path, options) => {
     assert.equal(path, '/api/remote-claude/connection')
     assert.equal(options.credentials, 'same-origin')
@@ -43,7 +43,8 @@ test('real Client API and Host handler persist credentials separately with names
   const f = fixture()
   const result = await f.api.save(patch, 'new-test-secret', 7)
   assert.equal(f.secret(), 'new-test-secret')
-  assert.deepEqual(f.calls.map(call => call[0]), ['set', 'resolve', 'update', 'reset', 'resolve'])
+  assert.deepEqual(f.calls.map(call => call[0]), ['set', 'resolve', 'update', 'afterSave', 'resolve'])
+  assert.deepEqual(f.calls.find(call => call[0] === 'afterSave'), ['afterSave', true])
   assert.equal(f.calls.find(call => call[0] === 'update')[3], 7)
   assert.equal(result.revision, 8)
   assert.equal(result.credentialConfigured, true)
@@ -81,7 +82,14 @@ test('stale revision is rejected before rotating the password', async () => {
 test('key authentication does not access password credentials', async () => {
   const f = fixture()
   await f.api.save({ ...patch, passwordRef: '', privateKeyPath: 'id_ed25519' }, '', 7)
-  assert.deepEqual(f.calls.map(call => call[0]), ['update', 'reset'])
+  assert.deepEqual(f.calls.map(call => call[0]), ['update', 'afterSave'])
+  assert.deepEqual(f.calls.at(-1), ['afterSave', true])
+})
+
+test('saving display settings does not ask the manager to recycle warm sessions', async () => {
+  const f = fixture()
+  await f.api.save({ ...patch, showThinking: false, activityPollMs: 2500 }, '', 7)
+  assert.deepEqual(f.calls.find(call => call[0] === 'afterSave'), ['afterSave', false])
 })
 
 test('unknown fields cannot mutate unrelated settings or credentials', async () => {

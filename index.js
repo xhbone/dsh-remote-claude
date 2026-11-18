@@ -41,7 +41,7 @@ export const Config = z.object({
   cancelBehavior: z.string().default('stop').volatile().description('DSH 侧取消一次回复时的行为：stop（回收远端进程）或 pause（发送 interrupt 并保留进程与会话）。'),
   turnReconnectAttempts: z.number().default(5).volatile().description('单个 turn 内 SSH 断线后的最大重连续读次数，0 表示不重连。'),
   turnIdleTimeoutMs: z.number().default(300000).volatile().description('远端连续无输出的看门狗上限，单位毫秒；0 表示关闭。触发后中断本轮并报 TURN_IDLE_TIMEOUT。'),
-  retentionDays: z.number().default(7).volatile().description('已结束的远端运行目录保留天数，超过后在新建远端会话时自动清理；0 表示不删除。无人认领且长时间静默的远端进程也会一并回收。'),
+  retentionDays: z.number().default(7).volatile().description('已结束的远端运行目录保留天数，超过后在新建远端会话时自动清理；0 表示不自动清理。'),
 })
 
 export function apply(ctx, refs) {
@@ -78,7 +78,7 @@ export function apply(ctx, refs) {
   ctx.llm.registerAdapter(['remote-claude'], adapter)
   ctx.connection.fetch.register({
     path: CONNECTION_PATH, methods: ['GET', 'POST'], requestBody: 'buffered',
-    fetch: createConnectionHandler(ctx, () => manager.reset()),
+    fetch: createConnectionHandler(ctx, ({ reconnect }) => reconnect ? manager.reset() : undefined),
   })
   ctx.effect(() => async () => { await manager.dispose() })
 }

@@ -27,7 +27,8 @@ async function setup(t, execute) {
 }
 
 function success(input) {
-  return { results: [{ callId: input.calls[0].id, result: { isError: false, value: 'done' } }], additionalContexts: [], concluded: false }
+  assert.match(input.callId, /^remote-claude-/)
+  return { isError: false, value: 'done', content: [{ type: 'text', text: 'done' }] }
 }
 
 test('notification tools/call cannot execute and errors preserve request ids', async (t) => {

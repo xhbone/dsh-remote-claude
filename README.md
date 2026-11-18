@@ -18,6 +18,8 @@ Claude Code 的内建 `Read/Edit/Bash` 被 `--tools ""` 关闭，只能看到当
 
 ## 前置条件
 
+npm 版 DSH 的远程工具若统一返回 `Cannot read properties of undefined (reading 'find')`，请升级到插件 0.3.5。网关通过单次 ToolRuntime 调用执行并记录工具事件，提供 `selectExecutor` 和 `resolve` 的桌面构建继续使用原生批量流程。
+
 - DSH `>=0.2.1-rc.2`，Node.js `>=22.19.0`。插件会特性探测 `ctx.tools.execute` 与 `ctx.agents`，缺失时在加载阶段给出明确错误，而不是在首个 turn 才失败。
 - Linux VPS 上有专用非 root 用户，并已安装、登录 Claude Code 2.x；需要 Bash、GNU tail（含 `--pid`）、base64、setsid 和 nohup。不再需要远端 `python3`：模型目录与额度刷新改为在 Node 侧通过 SSH 双工流发送只读 `control_request`。
 - SSHD 允许仅绑定 VPS 回环地址的 remote forwarding。不要设置 `GatewayPorts yes`。
@@ -86,14 +88,14 @@ ssh-keyscan -p 22 your-vps.example | ssh-keygen -lf - -E sha256
 
 也可以选择目录里的任意模型（别名或完整版本 ID，例如 `fable`、`claude-fable-5-2`、`claude-opus-5-5`），或手动输入 Claude Code 接受的模型 ID。`claude-code-agent` 使用 Host 配置里的 `claudeModel`。
 
-等待远端输出时，composer 下方的活动条会显示当前阶段、已用时间和最近动作。点「暂停」会立刻向远端发 `interrupt`：Host 继续读取输出直到本次 `result`（最多 `pauseTimeoutMs`），确认后保留远端进程与会话；下一条消息通过 `--resume <claudeSessionId>` 在原上下文继续，而不是重放历史。若超时未确认，则回收进程并回退到压缩历史重建。点「停止」立即回收远端进程。
+等待远端输出时，composer 下方的活动条会显示当前阶段、已用时间和最近动作。点「暂停」会立刻向远端发 `interrupt`：Host 继续读取输出直到本次 `result`（最多 `pauseTimeoutMs`），确认后保留远端进程与会话。DSH 保存本轮回复且历史校验通过时，下一条消息在原进程中继续。若超时未确认，或 DSH 侧取消后未保存本轮回复，则从 DSH 历史重建。点「停止」立即回收远端进程。
 
 思考强度有两层：Host 配置页的 `reasoningEffort` 是默认值，会话 composer 的原生思考强度选择优先；选中的档位会作为 `--effort <level>` 传给远端 Claude Code，档位不在该模型 `supportedEffortLevels` 内时请求直接失败（不会静默降级）。模型或档位变化会重建远端会话。
 
 ### 断线、重启与历史一致性
 
 - 活动 turn 中 SSH 传输中断时，Host 会自动重连（默认最多 5 次，可用 `turnReconnectAttempts` 调整），重新建立同一远端端口的 reverse forward，并用 `tail -c +<已提交 offset>` 续读，不重放已发送的输入。
-- 每个成功或暂停的 turn 都会把 `claudeSessionId`、runId、消息前缀摘要和 system prompt 摘要写入本机 handoff 文件（`<tmpdir>/dsh-remote-claude/`）。Host 重启后若前缀与 system prompt 摘要仍匹配，会结束遗留 run 并通过 `--resume` 续接；否则用压缩历史重建。
+- 每个成功或已确认暂停的 turn 会把 `claudeSessionId`、runId、包含本轮回复的历史摘要和 system prompt 摘要写入本机 handoff 文件（`<tmpdir>/dsh-remote-claude/`）。Host 重启或空闲回收后，旧 run 已退出且历史吻合时，发送新消息前通过 `--resume` 续接原会话。每个会话和用途使用固定的远端项目目录，MCP 配置与日志仍按 run 分开。
 - 每轮开始前都会校验 DSH 消息前缀与 system prompt 摘要。DSH 中重新生成、编辑、回退或压缩历史导致两侧分叉时，会显式重建远端会话，而不是静默沿用旧的远端上下文。
 
 ## 安全边界
@@ -108,12 +110,12 @@ ssh-keyscan -p 22 your-vps.example | ssh-keygen -lf - -E sha256
 
 ## 当前 MVP 限制
 
-- 重连与 `--resume` 只在消息前缀、system prompt、模型与思考档位都一致时生效；如果 Host 重启期间 DSH 历史被编辑，会按设计回退到压缩历史重建。活动 turn 内默认最多重连 5 次（`turnReconnectAttempts`），超过后本轮报错，已提交的输入不会自动重放。
-- MCP 网关会为每次工具调用补上 DSH 的 `{turn, step}` 日志上下文和按步骤解析的 `ResolvedToolSet`：工具执行会写入外层 `tool/call`/`tool/result` 会话事件，原生工具卡、diff 卡与 root 日志可见，条件注册工具也不会再返回 `UNKNOWN_TOOL`。
+- `--resume` 要求历史、system prompt、模型、思考档位和远端环境一致。旧进程仍在运行、状态未知或 handoff 缺失时会重建。首次升级会使用这一重建路径。活动 turn 的 SSH 重连使用独立的重试预算（默认 5 次），只从确认的输出偏移续读。
+- MCP 网关在原始 DSH 步骤内传递 `{turn, step}` 和按步骤解析的工具集合，由 DSH 记录 `tool/call` / `tool/result` 及工具提供的 diff 元数据。桌面版的卡片展示还需实机验证。
 - 系统提示不再只在进程启动时快照：摘要变化会触发远端会话重建；重建后 Claude 会重新读取当前 preset，而不是继承旧进程的系统提示。
 - Claude Code 子代理的文本会以引用块投影到主回复，`task_started`/`task_progress`/`task_notification` 只写入活动流，不伪造子代理的工具卡；嵌套子代理的图片与结构化结果仍不投影。
 - 模型名或用途（例如标题生成、压缩）不同的请求使用独立远端会话；同一会话和用途不接受并发 turn。工具请求跨 HTTP 串行（只读工具除外），结束/取消 turn 会撤销其授权。
-- 远端会保存对话、日志与含 MCP token 的配置到私有运行目录。进程结束、`stop` 或空闲回收会自动删除对应 run 目录；每次会话启动会扫描并回收过期孤儿目录。配置页「清理远端运行目录」按钮会立即删除已结束的 run，并 TERM + 删除无人认领的存活 run（当前 Host 正在使用的 runId 会跳过）。后台扫描仍只在存活超过 `max(2 × idleSessionMs, 1h)` 时 TERM 孤儿。
+- 远端在私有 run 目录保存日志和 MCP 配置。清理只删除已确认退出的 run，或超过宽限期且可判定已失去进程的目录。手动清理可跳过保留天数，仍保留正在运行或状态未知的进程，避免影响共用远端目录的其他 Host。
 - 额度与 token 统计写入本机 `~/.dsh-remote-claude/ledger.json`，Host 重启后保留按 DSH session 的累计值与成本高水位；5 小时窗口百分比来自远端 `rate_limit_event` 与刷新探针。跨机器、跨 VPS 的汇总仍不支持。
 
 ## 开发验证
@@ -124,7 +126,7 @@ pnpm test
 pnpm run check
 ```
 
-`npm run check` 自动发现 `index.js`、`client.js`、`lib/`、`test/`、`scripts/` 下的全部 JS 并逐文件语法检查，不再维护手写文件清单。本地自动化测试为 105 项，包含密码引用/轮换、配置表单到 Host 的真实协议契约、CAS 冲突、模型目录归一化、思考强度校验、额度归一化、context usage 与累计账本分离、运行时发现/体检/清理接口、活动日志状态机、暂停/停止控制接口与 drain 暂停、活动条轮询退避、工具活动打点、图片透传、只读工具并行、handoff 持久化、`--resume`/Web 工具参数、协议事件与思考块投影、子代理文本投影、协议版本下限、原生工具卡日志与条件工具集合、持久化账本、`remoteBuiltinTools` 参数、Client 端契约、工具授权与生命周期。tgz 现在包含 `test/`，可直接复现测试结果。真实 VPS 验证结果及未验证范围见 `VALIDATION.md`。
+`npm run check` 自动发现 `index.js`、`client.js`、`lib/`、`test/`、`scripts/` 下的全部 JS 并逐文件语法检查，不再维护手写文件清单。本地自动化测试覆盖密码引用/轮换、配置表单到 Host 的真实协议契约、CAS 冲突、模型目录归一化、思考强度校验、额度归一化、context usage 与累计账本分离、运行时发现/体检/清理接口、活动日志状态机、暂停/停止控制接口与 drain 暂停、活动条轮询退避、工具活动打点、图片透传、只读工具并行、handoff 持久化、`--resume`/Web 工具参数、协议事件与思考块投影、子代理文本投影、协议版本下限、原生工具卡日志与条件工具集合、持久化账本、`remoteBuiltinTools` 参数、Client 端契约、工具授权与生命周期。tgz 现在包含 `test/`，可直接复现测试结果。真实 VPS 验证结果及未验证范围见 `VALIDATION.md`。
 
 ## 来源与授权
 
