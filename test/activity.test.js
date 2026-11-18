@@ -93,6 +93,32 @@ test('endTurn records usage and can mark the turn paused', () => {
   assert.equal(log.snapshot().paused, true)
 })
 
+test('cache deadlines use observed request starts and only refresh an unambiguous tier', () => {
+  clock = 1_000
+  const log = new ActivityLog({ now })
+  const turn = { selectedModel: 'sonnet', remoteSessionId: 'remote-1' }
+  log.beginTurn({ ...turn, cacheStart: 'new' })
+  log.observeCache({ cacheReadTokens: 0, cacheWriteTokens: 20 }, { fiveMinuteTokens: 20 }, clock)
+  assert.equal(log.snapshot().cache.firstRequest.coldReason, 'new')
+  assert.deepEqual(log.snapshot().cache.expiresAt, { fiveMinuteTokens: 301_000 })
+  advance(30_000)
+  log.beginTurn(turn)
+  log.observeCache({ cacheReadTokens: 20 }, undefined, clock)
+  assert.deepEqual(log.snapshot().cache.expiresAt, { fiveMinuteTokens: 331_000 })
+  log.observeCache({ cacheReadTokens: 20, cacheWriteTokens: 7 }, { oneHourTokens: 7 }, clock)
+  advance(20_000)
+  log.observeCache({ cacheReadTokens: 27 }, undefined, clock)
+  assert.deepEqual(log.snapshot().cache.expiresAt, { fiveMinuteTokens: 331_000, oneHourTokens: 3_631_000 })
+  clock = 4_000_000
+  log.beginTurn(turn)
+  log.observeCache({ cacheReadTokens: 0, cacheWriteTokens: 7 }, undefined, clock)
+  assert.equal(log.snapshot().cache.firstRequest.coldReason, 'ttl')
+  log.beginTurn({ ...turn, remoteSessionId: 'remote-2', cacheStart: 'model' })
+  log.observeCache({ cacheReadTokens: 0, cacheWriteTokens: 7 }, undefined, clock)
+  assert.equal(log.snapshot().cache.firstRequest.coldReason, 'model')
+  assert.deepEqual(log.snapshot().cache.expiresAt, {})
+})
+
 test('the entry ring keeps only the newest capacity entries', () => {
   clock = 1_000
   const log = new ActivityLog({ now, capacity: 3 })

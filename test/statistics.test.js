@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { UsageLedger, accountLimits, rateLimitSummary } from '../lib/statistics.js'
+import { UsageLedger, accountLimits, promptTokens, rateLimitSummary } from '../lib/statistics.js'
 
 test('rate limit events are converted from fractions to percentages', () => {
   const summary = rateLimitSummary({
@@ -53,6 +53,8 @@ test('ledger accumulates tokens, differences cumulative cost, and separates auxi
   assert.equal(row.last.model, 'claude-sonnet-5-5')
   assert.equal(row.last.effort, 'default')
   assert.equal(row.last.success, false)
+  assert.equal(row.lastMain.model, 'claude-opus-5-5')
+  assert.equal(row.lastMain.usage.inputTokens, 50)
   assert.equal(row.runs, undefined)
 })
 
@@ -88,4 +90,33 @@ test('ledger persists totals across instances', async () => {
   assert.equal(second.get('session-a').totals.inputTokens, 10)
   assert.equal(second.get('session-a').costUsd, 0.25)
   assert.equal(second.aggregate().turns, 1)
+})
+
+test('migrates version 1 inclusive inputs once and preserves the cost high-water mark', async t => {
+  const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'ledger-v1-'))
+  t.after(() => rmSync(dir, { recursive: true }))
+  const file = join(dir, 'ledger.json')
+  const usage = { inputTokens: 100, outputTokens: 4, cacheReadTokens: 70, cacheWriteTokens: 20 }
+  writeFileSync(file, JSON.stringify({ version: 1, sessions: [{
+    sessionId: 'session-1', turns: 1, auxiliaryTurns: 0, totals: usage, costUsd: 0.25,
+    runs: [['run-1', 0.25]], last: { purpose: null, usage, contextUsage: usage },
+  }] }))
+  const ledger = new UsageLedger({ file })
+  const saved = ledger.get('session-1')
+  assert.equal(promptTokens(saved.totals), 100)
+  assert.equal(saved.totals.inputTokens, 10)
+  assert.equal(saved.lastMain.usage.inputTokens, 10)
+  assert.equal(saved.lastMain.contextUsage.inputTokens, 10)
+  ledger.record('session-1', 'run-1', {
+    type: 'statistics', usage: { inputTokens: 5, cacheReadTokens: 10, cacheWriteTokens: 3 },
+    cacheCreation: { fiveMinuteTokens: 3 }, costUsd: 0.5, success: true,
+  })
+  const updated = new UsageLedger({ file }).get('session-1')
+  assert.equal(updated.totals.inputTokens, 15)
+  assert.equal(promptTokens(updated.totals), 118)
+  assert.equal(updated.costUsd, 0.5)
+  assert.deepEqual(updated.cacheCreation, { fiveMinuteTokens: 3 })
 })

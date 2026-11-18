@@ -64,8 +64,7 @@ test('three-tool turn reports last top-level assistant occupancy; only result to
   const { collect, bills } = fixture(t, [source.map(line).join('')])
   const events = await collect()
   const usage = events.find(e => e.type === 'usage').usage
-  assert.equal(usage.inputTokens, 430)
-  assert.equal(usage.outputTokens, 7)
+  assert.deepEqual(usage, { inputTokens: 80, cacheReadTokens: 350, outputTokens: 7, totalTokens: 437 })
   assert.deepEqual(bills[0].contextUsage, usage)
   assert.equal(bills.length, 1)
   assert.equal(bills[0].usage.inputTokens, 6100)

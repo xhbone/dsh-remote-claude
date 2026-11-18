@@ -29,12 +29,14 @@ test('adapter rejects unsupported sampling options', async () => {
 test('message projection separates effective system and latest user text', () => {
   const messages = [
     { role: 'system', content: [{ type: 'text', text: 'system rules' }] },
+    { role: 'system', content: [{ type: 'text', text: 'extra rules' }] },
     { role: 'user', content: [{ type: 'text', text: 'first' }] },
     { role: 'assistant', content: [{ type: 'text', text: 'answer' }] },
     { role: 'user', content: [{ type: 'text', text: 'latest' }] },
   ]
-  assert.equal(effectiveSystemText(messages), 'system rules')
+  assert.equal(effectiveSystemText(messages), 'system rules\n\nextra rules')
   assert.equal(effectiveSystemText(messages, 'one-shot'), 'one-shot')
   assert.equal(latestUserText(messages), 'latest')
   assert.match(transcriptToText(messages), /\[ASSISTANT\]\nanswer/)
+  assert.doesNotMatch(transcriptToText(messages), /system rules|extra rules|\[SYSTEM\]/)
 })

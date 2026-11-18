@@ -124,6 +124,22 @@ test('a new Host restores the saved Claude UUID and uses the same remote project
   assert.equal(workDir(f.launched[0]), workDir(f.launched[1]))
 })
 
+test('a model change rebuilds history without duplicating the system prompt and shows a reminder', async t => {
+  const f = fixture(t)
+  const manager = f.manager()
+  const system = message('system', 'authoritative system instructions')
+  const developer = message('developer', 'developer instructions')
+  await run(manager, [system, first], { system: undefined })
+  await run(manager, [system, developer, first, reply, second], { model: 'opus', system: undefined })
+  assert.equal(f.launched.length, 2)
+  assert.match(f.launched[1].script, /--append-system-prompt-file/)
+  assert.match(f.sent[1], /developer instructions[\s\S]*first request[\s\S]*a reply[\s\S]*second request/)
+  assert.doesNotMatch(f.sent[1], /authoritative system instructions|\[SYSTEM\]/)
+  const cache = manager.activityFor(options.sessionId).snapshot().cache
+  assert.equal(cache.startReason, 'model')
+  assert.deepEqual(cache.modelSwitch, { from: 'sonnet', to: 'opus' })
+})
+
 test('a live or uncertain previous run causes a fresh session and full replay before sending input', async t => {
   const f = fixture(t, { oldRunStatus: 1 })
   await run(f.manager(), [first])

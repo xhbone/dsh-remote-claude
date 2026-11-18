@@ -121,6 +121,44 @@ window.__ModuleLoader__.load({
       stopped: '#8a8a8a', error: '#d33d3d',
     }
 
+    const CACHE_START_LABELS = {
+      new: '首次远端请求', model: '切换模型', effort: '思考强度变化', endpoint: '远端连接配置变化',
+      history: 'DSH 历史或系统提示变化', replay: '重建远端会话', resume: '旧远端进程无法安全接续',
+      ttl: '已观测的缓存 TTL 可能到期', unknown: '原因未上报',
+    }
+
+    function promptTokens(usage) {
+      return (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
+    }
+
+    function cacheHitText(usage) {
+      if (!usage || typeof usage.cacheReadTokens !== 'number' || promptTokens(usage) <= 0) return ''
+      return `整轮缓存命中 ${percentText(100 * usage.cacheReadTokens / promptTokens(usage))}`
+    }
+
+    function cacheWriteText(creation) {
+      return [
+        typeof creation?.fiveMinuteTokens === 'number' ? `5 分钟 ${creation.fiveMinuteTokens} tokens` : '',
+        typeof creation?.oneHourTokens === 'number' ? `1 小时 ${creation.oneHourTokens} tokens` : '',
+      ].filter(Boolean).join(' / ')
+    }
+
+    function CacheCountdown({ expiresAt }) {
+      const [tick, setTick] = useState(0)
+      const now = Date.now()
+      const latest = Math.max(expiresAt.fiveMinuteTokens ?? 0, expiresAt.oneHourTokens ?? 0)
+      useEffect(() => {
+        const remaining = latest - Date.now()
+        if (remaining <= 0) return undefined
+        const timer = setTimeout(() => setTick(value => value + 1), Math.min(1000, remaining))
+        return () => clearTimeout(timer)
+      }, [latest, tick])
+      const display = [['5 分钟', expiresAt.fiveMinuteTokens], ['1 小时', expiresAt.oneHourTokens]]
+        .filter(([, time]) => Number.isFinite(time))
+        .map(([label, time]) => `${label}缓存${time > now ? `预计剩余 ${durationText(time - now)}` : '预计已到期'}`)
+      return h('span', { title: '根据观测到的请求开始和缓存写入估算。供应商未返回缓存到期时间。' }, display.join(' · '))
+    }
+
     function ActivityStrip(props) {
       const sessionId = props.sessionId
       const [data, setData] = useState(null)
@@ -151,7 +189,7 @@ window.__ModuleLoader__.load({
         void tick()
         return () => { mounted = false; clearTimeout(timer) }
       }, [sessionId])
-      if (!data?.available || !data.activity) return null
+      if (!data?.available || data.sessionId !== sessionId || !data.activity) return null
       const activity = data.activity
       const color = STATE_COLORS[activity.state] || '#8a8a8a'
       const cost = typeof data.usage?.costUsd === 'number' ? data.usage.costUsd : activity.turn?.costUsd
@@ -171,6 +209,13 @@ window.__ModuleLoader__.load({
       // The ledger view nests counters under `totals`; older snapshots used the
       // flat shape, so accept both instead of rendering "undefined↑".
       const usage = data.usage?.totals ?? data.usage ?? null
+      const turnUsage = data.usage?.lastMain ?? (data.usage?.last?.purpose ? null : data.usage?.last)
+      const turnHit = cacheHitText(turnUsage?.usage)
+      const turnWrite = cacheWriteText(turnUsage?.cacheCreation)
+      const cache = activity.cache
+      const latestWrite = cacheWriteText(cache?.latestRequest?.creation)
+      const coldReason = cache?.firstRequest?.coldReason
+      const modelSwitch = cache?.modelSwitch
       const fiveHour = (data.rateLimit?.windows ?? []).find(window => window.id === 'five_hour')
       return h('div', { style: { display: 'grid', gap: 6, padding: '6px 2px', fontSize: 12, borderTop: '1px solid var(--color-border, #e4e4e4)' } },
         h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' } },
@@ -181,7 +226,8 @@ window.__ModuleLoader__.load({
           activity.elapsedMs ? h('span', { style: { opacity: 0.75 } }, `已用 ${durationText(activity.elapsedMs)}`) : null,
           typeof activity.silentMs === 'number' && activity.silentMs > 3000 ? h('span', { style: { opacity: 0.75 } }, `静默 ${durationText(activity.silentMs)}`) : null,
           activity.tool ? h('span', { style: { opacity: 0.75 } }, `工具 ${activity.tool.name || activity.tool}${activity.tool.argsPreview ? ` ${activity.tool.argsPreview}` : ''}`) : null,
-          typeof usage?.inputTokens === 'number' ? h('span', { style: { opacity: 0.75 } }, `${usage.inputTokens}↑ ${usage.outputTokens ?? 0}↓`) : null,
+          typeof usage?.inputTokens === 'number' ? h('span', { style: { opacity: 0.75 }, title: '会话累计输入含缓存读写' }, `${promptTokens(usage)}↑ ${usage.outputTokens ?? 0}↓`) : null,
+          turnHit ? h('span', { style: { opacity: 0.75 }, title: '上一已结算主回合的缓存读 ÷ 全部提示词 token' }, turnHit) : null,
           fiveHour && typeof fiveHour.utilization === 'number'
             ? h('span', { style: { color: fiveHour.utilization >= 90 ? '#d33d3d' : 'inherit', fontWeight: fiveHour.utilization >= 90 ? 600 : 400, opacity: fiveHour.utilization >= 90 ? 1 : 0.75 } },
                 `5h ${percentText(fiveHour.utilization)}`)
@@ -195,6 +241,17 @@ window.__ModuleLoader__.load({
           expanded
             ? h('button', { type: 'button', onClick: () => control('stop'), style: { cursor: 'pointer', padding: '2px 10px', borderRadius: 12, border: '1px solid var(--color-border, #ccc)', background: 'transparent', color: 'inherit' } }, '停止')
             : null),
+        modelSwitch ? h('p', { role: 'status', style: { margin: 0, color: '#c05a00' } },
+          `模型已切换 ${modelSwitch.from} → ${modelSwitch.to}，首个请求可能需要重建缓存。`) : null,
+        expanded && (coldReason || cache?.startReason || latestWrite || turnWrite || Object.keys(cache?.expiresAt ?? {}).length)
+          ? h('div', { style: { display: 'grid', gap: 2, opacity: 0.82 } },
+              coldReason ? h('span', null, `首个有缓存数据的请求未命中 · ${CACHE_START_LABELS[coldReason]}`) : null,
+              !coldReason && cache?.startReason && cache.startReason !== 'model'
+                ? h('span', null, `本轮远端上下文 · ${CACHE_START_LABELS[cache.startReason]}`) : null,
+              turnWrite ? h('span', null, `整轮缓存写入 · ${turnWrite}`) : null,
+              latestWrite ? h('span', null, `最近请求缓存写入 · ${latestWrite}`) : null,
+              Object.keys(cache?.expiresAt ?? {}).length ? h(CacheCountdown, { expiresAt: cache.expiresAt }) : null)
+          : null,
         paused ? h('p', { style: { margin: 0, opacity: 0.78 } }, activity.state === 'stopped'
           ? '远端进程已回收；发送任意消息会从 DSH 历史重建会话。'
           : '已暂停：发送任意消息即可继续，远端上下文仍保留。') : null,
@@ -469,7 +526,7 @@ window.__ModuleLoader__.load({
                account?.updatedAt ? `读取于 ${new Date(account.updatedAt).toLocaleString('zh-CN', { hour12: false })}` : '未读取'].filter(Boolean).join(' · '))),
           windows ?? h('p', { style: hintStyle }, runtimeBusy ? '正在读取…' : '尚未读取账号额度。'),
           aggregate && aggregate.sessions
-            ? h('p', { style: hintStyle }, `本次 Host 激活累计：${aggregate.sessions} 个远端会话 / ${aggregate.turns} 轮 / 输入 ${aggregate.totals.inputTokens} tokens / 输出 ${aggregate.totals.outputTokens} tokens / 成本 $${(aggregate.costUsd || 0).toFixed(4)}（含缓存读写）`)
+            ? h('p', { style: hintStyle }, `累计 ${aggregate.sessions} 个远端会话 / ${aggregate.turns} 轮 / 输入 ${promptTokens(aggregate.totals)} tokens（含缓存读写）/ 输出 ${aggregate.totals.outputTokens} tokens / 成本 $${(aggregate.costUsd || 0).toFixed(4)}`)
             : null,
           h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
             h('button', { type: 'button', disabled: runtimeBusy || !ready, onClick: refreshQuota, style: { ...inputStyle, width: 'auto', cursor: 'pointer' } },

@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-remote-claude",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Run Claude Code on a VPS while keeping workspace files, shell commands, approvals, and tool results inside DeepSeek Harness.",
   "type": "module",
   "private": true,

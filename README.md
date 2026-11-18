@@ -92,6 +92,12 @@ ssh-keyscan -p 22 your-vps.example | ssh-keygen -lf - -E sha256
 
 思考强度有两层：Host 配置页的 `reasoningEffort` 是默认值，会话 composer 的原生思考强度选择优先；选中的档位会作为 `--effort <level>` 传给远端 Claude Code，档位不在该模型 `supportedEffortLevels` 内时请求直接失败（不会静默降级）。模型或档位变化会重建远端会话。
 
+### 缓存与用量
+
+Remote Claude 活动条显示上一主回合的整轮缓存命中率，按缓存读取量除以该回合全部请求的输入量计算。DSH 原生上下文占用使用最后一次主请求的输入量。三个输入桶分别是未缓存输入、缓存读取和缓存写入。
+
+展开「详情」可查看供应商返回的 5 分钟和 1 小时缓存写入量、已观测到的首请求未命中原因和估算的到期倒计时。切换模型时，活动条会提示首个请求可能需要重建缓存。历史重放将系统提示通过专用参数传给远端一次。
+
 ### 断线、重启与历史一致性
 
 - 活动 turn 中 SSH 传输中断时，Host 会自动重连（默认最多 5 次，可用 `turnReconnectAttempts` 调整），重新建立同一远端端口的 reverse forward，并用 `tail -c +<已提交 offset>` 续读，不重放已发送的输入。

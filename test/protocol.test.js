@@ -35,7 +35,8 @@ test('surfaces subagent assistant text with its parent tool call', () => {
   assert.equal(event.kind, 'subagent-text')
   assert.equal(event.text, 'child result')
   assert.equal(event.parentToolUseId, 'toolu_child')
-  assert.equal(event.usage.inputTokens, 6)
+  assert.equal(event.usage.inputTokens, 2)
+  assert.equal(event.usage.totalTokens, 9)
 })
 
 test('reports task lifecycle events as subagent activity', () => {
@@ -53,14 +54,18 @@ test('normalizes top-level deltas and ignores subagent deltas', () => {
   assert.deepEqual(parseClaudeEvent({ ...delta, parent_tool_use_id: 'tool-1' }), { kind: 'ignore' })
 })
 
-test('normalizes result usage', () => {
-  assert.deepEqual(parseClaudeEvent({
-    type: 'result', subtype: 'success', is_error: false, result: 'done',
-    usage: { input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 3 },
-  }), {
-    kind: 'result', success: true, text: 'done', subtype: 'success',
-    usage: { inputTokens: 13, outputTokens: 4, totalTokens: 17, cacheReadTokens: 3 },
-  })
+test('normalizes disjoint usage buckets and preserves the write TTL breakdown', () => {
+  const wireUsage = {
+    input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 80,
+    cache_creation: { ephemeral_5m_input_tokens: 7, ephemeral_1h_input_tokens: 3 },
+  }
+  for (const usage of [wireUsage, { ...wireUsage, cache_creation_input_tokens: 10 }]) {
+    assert.deepEqual(parseClaudeEvent({ type: 'result', subtype: 'success', result: 'done', usage }), {
+      kind: 'result', success: true, text: 'done', subtype: 'success',
+      usage: { inputTokens: 10, outputTokens: 4, totalTokens: 104, cacheReadTokens: 80, cacheWriteTokens: 10 },
+      cacheCreation: { fiveMinuteTokens: 7, oneHourTokens: 3 },
+    })
+  }
 })
 
 test('keeps the cost and subtype of an unconfirmed execution error', () => {

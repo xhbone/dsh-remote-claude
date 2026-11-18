@@ -76,3 +76,34 @@ test('the client registers the composer status strip next to the shipped entries
   assert.equal(strip[1].id, 'remote-claude-activity')
   assert.equal(strip[1].order, 5)
 })
+
+test('the composer derives whole-turn cache hits from result usage and shows cache diagnostics', () => {
+  const log = new ActivityLog()
+  log.beginTurn({ selectedModel: 'opus', previousModel: 'sonnet', cacheStart: 'model' })
+  log.observeCache({ cacheReadTokens: 0, cacheWriteTokens: 10 }, { fiveMinuteTokens: 10 }, Date.now())
+  const data = {
+    available: true, sessionId: 'session-1', activity: log.snapshot(),
+    usage: { lastMain: {
+      usage: { inputTokens: 10, cacheReadTokens: 70, cacheWriteTokens: 20 },
+      contextUsage: { inputTokens: 5, cacheReadTokens: 5 },
+      cacheCreation: { fiveMinuteTokens: 10, oneHourTokens: 10 },
+    } },
+  }
+  const initialStates = [data, true]
+  const react = {
+    createElement: (type, props, ...children) => typeof type === 'function' ? type(props) : children,
+    useState: initial => [initialStates.length ? initialStates.shift() : initial],
+    useEffect() {},
+  }
+  let renderDock
+  entry.factory(() => react).apply({ slots: {
+    inject(_name, register) { register() },
+    register(options, render) { if (options.id === 'remote-claude-activity') renderDock = render },
+  } })
+  const text = renderDock({ sessionId: 'session-1' }).flat(Infinity).join(' ')
+  assert.match(text, /整轮缓存命中 70%/u)
+  assert.match(text, /模型已切换 sonnet → opus/u)
+  assert.match(text, /首个有缓存数据的请求未命中 · 切换模型/u)
+  assert.match(text, /整轮缓存写入 · 5 分钟 10 tokens \/ 1 小时 10 tokens/u)
+  assert.match(text, /5 分钟缓存预计剩余/u)
+})
